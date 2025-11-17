@@ -1,0 +1,16 @@
+[project]
+name = "dynamic-boost"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "inquirerpy>=0.3.4",
+    "joblib>=1.5.2",
+    "pandas>=2.3.3",
+    "polars>=1.35.2",
+    "pyarrow>=22.0.0",
+    "pyinstaller>=6.16.0",
+    "scikit-learn>=1.7.2",
+    "xgboost>=3.1.1",
+]
