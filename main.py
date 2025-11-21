@@ -10,14 +10,21 @@ def load_truth_data() -> pl.DataFrame:
     # mock your "truth" data from "database"
     n = 50
     # Use native polars operations instead of Python lists for better performance
-    return pl.DataFrame(
+    ids = pl.arange(1, n + 1, eager=True)
+    df = pl.DataFrame(
         {
-            "id": pl.arange(1, n + 1, eager=True),
-            "feature_1": pl.arange(1, n + 1, eager=True) * 0.5,
-            "feature_2": pl.arange(1, n + 1, eager=True) % 7,
-            "feature_3": pl.arange(1, n + 1, eager=True) % 3,
-            "label": ["class_A" if i % 2 == 0 else "class_B" for i in range(1, n + 1)],
+            "id": ids,
+            "feature_1": ids * 0.5,
+            "feature_2": ids % 7,
+            "feature_3": ids % 3,
         }
+    )
+    # Add label column using polars expression for better performance
+    return df.with_columns(
+        pl.when(pl.col("id") % 2 == 0)
+        .then(pl.lit("class_A"))
+        .otherwise(pl.lit("class_B"))
+        .alias("label")
     )
 
 
