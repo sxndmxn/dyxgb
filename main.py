@@ -9,12 +9,13 @@ from pathlib import Path
 def load_truth_data() -> pl.DataFrame:
     # mock your "truth" data from "database"
     n = 50
+    # Use native polars operations instead of Python lists for better performance
     return pl.DataFrame(
         {
-            "id": list(range(1, n + 1)),
-            "feature_1": [i * 0.5 for i in range(1, n + 1)],
-            "feature_2": [i % 7 for i in range(1, n + 1)],
-            "feature_3": [i % 3 for i in range(1, n + 1)],
+            "id": pl.arange(1, n + 1, eager=True),
+            "feature_1": pl.arange(1, n + 1, eager=True) * 0.5,
+            "feature_2": pl.arange(1, n + 1, eager=True) % 7,
+            "feature_3": pl.arange(1, n + 1, eager=True) % 3,
             "label": ["class_A" if i % 2 == 0 else "class_B" for i in range(1, n + 1)],
         }
     )
@@ -24,12 +25,13 @@ def load_unknown_data() -> pl.DataFrame:
     # mock unknown_data from "database"
     n = 20
     start = 1000
+    # Use native polars operations instead of Python lists for better performance
     return pl.DataFrame(
         {
-            "id": list(range(start, start + n)),
-            "feature_1": [i * 0.45 for i in range(1, n + 1)],
-            "feature_2": [i % 7 for i in range(1, n + 1)],
-            "feature_3": [i % 3 for i in range(1, n + 1)],
+            "id": pl.arange(start, start + n, eager=True),
+            "feature_1": pl.arange(1, n + 1, eager=True) * 0.45,
+            "feature_2": pl.arange(1, n + 1, eager=True) % 7,
+            "feature_3": pl.arange(1, n + 1, eager=True) % 3,
         }
     )
 
@@ -54,9 +56,11 @@ def select_target_and_features(df: pl.DataFrame):
 def align_unknown_columns(
     unknown_df: pl.DataFrame, selected_features: list[str]
 ) -> tuple[pl.DataFrame, list[str]]:
+    # Use set for O(1) lookup instead of O(n) list membership check
+    unknown_cols = set(unknown_df.columns)
     rename_map: dict[str, str] = {}
     for feat in selected_features:
-        if feat not in unknown_df.columns:
+        if feat not in unknown_cols:
             choices = list(unknown_df.columns) + ["<skip>"]
             mapped = inquirer.select(
                 message=f"Unknown data is missing feature '{feat}'. Map an existing column to it or <skip>:",
@@ -67,11 +71,13 @@ def align_unknown_columns(
 
     if rename_map:
         unknown_df = unknown_df.rename(rename_map)
+        unknown_cols = set(unknown_df.columns)  # Update set after rename
 
-    missing_after = [c for c in selected_features if c not in unknown_df.columns]
+    # Use set intersection for faster filtering
+    missing_after = [c for c in selected_features if c not in unknown_cols]
     if missing_after:
         print("Dropping features not present in unknown_data:", missing_after)
-        selected_features = [c for c in selected_features if c in unknown_df.columns]
+        selected_features = [c for c in selected_features if c in unknown_cols]
 
     return unknown_df, selected_features
 
@@ -125,8 +131,10 @@ def predict_unknowns(
     unknown_df: pl.DataFrame,
     feature_cols: list[str],
 ):
-    if not all(c in unknown_df.columns for c in feature_cols):
-        missing = [c for c in feature_cols if c not in unknown_df.columns]
+    # Use set for O(1) lookup instead of iterating through all columns
+    unknown_cols = set(unknown_df.columns)
+    missing = [c for c in feature_cols if c not in unknown_cols]
+    if missing:
         print("Cannot predict, unknown_data missing features:", missing)
         return
 
