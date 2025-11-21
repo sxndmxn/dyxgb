@@ -34,8 +34,8 @@ def load_unknown_data() -> pl.DataFrame:
     )
 
 
-def select_target_and_features(training_dataframe: pl.DataFrame):
-    available_columns = training_dataframe.columns
+def select_target_and_features(df: pl.DataFrame):
+    available_columns = df.columns
     feature_cols = inquirer.checkbox(
         message="Select feature columns for training (SPACE to toggle, ENTER to confirm):",
         choices=available_columns,
@@ -52,12 +52,12 @@ def select_target_and_features(training_dataframe: pl.DataFrame):
 
 
 def align_unknown_data_columns(
-    unknown_dataframe: pl.DataFrame, selected_features: list[str]
+    unknown_df: pl.DataFrame, selected_features: list[str]
 ) -> tuple[pl.DataFrame, list[str]]:
     rename_map: dict[str, str] = {}
     for feature in selected_features:
-        if feature not in unknown_dataframe.columns:
-            choices = list(unknown_dataframe.columns) + ["<skip>"]
+        if feature not in unknown_df.columns:
+            choices = list(unknown_df.columns) + ["<skip>"]
             mapped_column = inquirer.select(
                 message=f"Unknown data is missing feature '{feature}'. Map an existing column to it or <skip>:",
                 choices=choices,
@@ -66,20 +66,20 @@ def align_unknown_data_columns(
                 rename_map[mapped_column] = feature
 
     if rename_map:
-        unknown_dataframe = unknown_dataframe.rename(rename_map)
+        unknown_df = unknown_df.rename(rename_map)
 
-    missing_features_after_mapping = [column for column in selected_features if column not in unknown_dataframe.columns]
+    missing_features_after_mapping = [column for column in selected_features if column not in unknown_df.columns]
     if missing_features_after_mapping:
         print("Dropping features not present in unknown_data:", missing_features_after_mapping)
-        selected_features = [column for column in selected_features if column in unknown_dataframe.columns]
+        selected_features = [column for column in selected_features if column in unknown_df.columns]
 
-    return unknown_dataframe, selected_features
+    return unknown_df, selected_features
 
 
-def train_xgboost_classifier(training_dataframe: pl.DataFrame, target_col: str, feature_cols: list[str]):
-    training_data_pandas = training_dataframe.select(feature_cols + [target_col]).to_pandas()
-    feature_matrix = training_data_pandas[feature_cols]
-    target_labels = training_data_pandas[target_col]
+def train_xgboost_classifier(truth_df: pl.DataFrame, target_col: str, feature_cols: list[str]):
+    df_pd = truth_df.select(feature_cols + [target_col]).to_pandas()
+    feature_matrix = df_pd[feature_cols]
+    target_labels = df_pd[target_col]
 
     label_encoder = LabelEncoder()
     encoded_target_labels = label_encoder.fit_transform(target_labels)
@@ -122,21 +122,21 @@ def save_artifacts(classifier: XGBClassifier, label_encoder: LabelEncoder):
 def predict_unknown_data_labels(
     classifier: XGBClassifier,
     label_encoder: LabelEncoder,
-    unknown_dataframe: pl.DataFrame,
+    unknown_df: pl.DataFrame,
     feature_cols: list[str],
 ):
-    if not all(column in unknown_dataframe.columns for column in feature_cols):
-        missing_features = [column for column in feature_cols if column not in unknown_dataframe.columns]
+    if not all(column in unknown_df.columns for column in feature_cols):
+        missing_features = [column for column in feature_cols if column not in unknown_df.columns]
         print("Cannot predict, unknown_data missing features:", missing_features)
         return
 
-    unknown_data_pandas = unknown_dataframe.select(feature_cols).to_pandas()
-    class_probabilities = classifier.predict_proba(unknown_data_pandas)
+    unk_pd = unknown_df.select(feature_cols).to_pandas()
+    class_probabilities = classifier.predict_proba(unk_pd)
     predicted_class_indices = class_probabilities.argmax(axis=1)
     predicted_labels = label_encoder.inverse_transform(predicted_class_indices)
     prediction_confidences = class_probabilities.max(axis=1)
 
-    predictions_dataframe = unknown_dataframe.with_columns(
+    predictions_df = unknown_df.with_columns(
         pl.Series("predicted_label", predicted_labels),
         pl.Series("confidence", prediction_confidences),
     )
@@ -150,28 +150,28 @@ def predict_unknown_data_labels(
         ).execute()
         Path(predictions_output_path).parent.mkdir(parents=True, exist_ok=True)
         if predictions_output_path.lower().endswith(".csv"):
-            predictions_dataframe.write_csv(predictions_output_path)
+            predictions_df.write_csv(predictions_output_path)
         else:
-            predictions_dataframe.write_parquet(predictions_output_path)
+            predictions_df.write_parquet(predictions_output_path)
         print(f"Saved predictions -> {predictions_output_path}")
 
 
 def main():
     print("Loading data from database...")
-    training_dataframe = load_truth_data()
-    unknown_dataframe = load_unknown_data()
+    truth_df = load_truth_data()
+    unknown_df = load_unknown_data()
 
-    target_col, feature_cols = select_target_and_features(training_dataframe)
-    unknown_dataframe, feature_cols = align_unknown_data_columns(unknown_dataframe, feature_cols)
+    target_col, feature_cols = select_target_and_features(truth_df)
+    unknown_df, feature_cols = align_unknown_data_columns(unknown_df, feature_cols)
 
     print("Training XGBoost model...")
-    classifier, label_encoder = train_xgboost_classifier(training_dataframe, target_col, feature_cols)
+    classifier, label_encoder = train_xgboost_classifier(truth_df, target_col, feature_cols)
     save_artifacts(classifier, label_encoder)
 
     if inquirer.confirm(
         message="Run predictions on unknown_data now?", default=True
     ).execute():
-        predict_unknown_data_labels(classifier, label_encoder, unknown_dataframe, feature_cols)
+        predict_unknown_data_labels(classifier, label_encoder, unknown_df, feature_cols)
 
 
 if __name__ == "__main__":
