@@ -8,9 +8,9 @@ from pathlib import Path
 
 def load_truth_data() -> pl.DataFrame:
     # mock your "truth" data from "database"
-    n = 50
+    num_samples = 50
     # Use native polars operations instead of Python lists for better performance
-    ids = pl.arange(1, n + 1, eager=True)
+    ids = pl.arange(1, num_samples + 1, eager=True)
     df = pl.DataFrame(
         {
             "id": ids,
@@ -30,15 +30,15 @@ def load_truth_data() -> pl.DataFrame:
 
 def load_unknown_data() -> pl.DataFrame:
     # mock unknown_data from "database"
-    n = 20
-    start = 1000
+    num_samples = 20
+    unknown_data_start_id = 1000
     # Use native polars operations instead of Python lists for better performance
     return pl.DataFrame(
         {
-            "id": pl.arange(start, start + n, eager=True),
-            "feature_1": pl.arange(1, n + 1, eager=True) * 0.45,
-            "feature_2": pl.arange(1, n + 1, eager=True) % 7,
-            "feature_3": pl.arange(1, n + 1, eager=True) % 3,
+            "id": pl.arange(unknown_data_start_id, unknown_data_start_id + num_samples, eager=True),
+            "feature_1": pl.arange(1, num_samples + 1, eager=True) * 0.45,
+            "feature_2": pl.arange(1, num_samples + 1, eager=True) % 7,
+            "feature_3": pl.arange(1, num_samples + 1, eager=True) % 3,
         }
     )
 
@@ -139,9 +139,9 @@ def predict_unknown_data_labels(
 ):
     # Use set for O(1) lookup instead of iterating through all columns
     unknown_cols = set(unknown_df.columns)
-    missing = [c for c in feature_cols if c not in unknown_cols]
-    if missing:
-        print("Cannot predict, unknown_data missing features:", missing)
+    missing_features = [column for column in feature_cols if column not in unknown_cols]
+    if missing_features:
+        print("Cannot predict, unknown_data missing features:", missing_features)
         return
 
     unk_pd = unknown_df.select(feature_cols).to_pandas()
