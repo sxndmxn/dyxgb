@@ -8,9 +8,9 @@ from pathlib import Path
 
 def load_truth_data() -> pl.DataFrame:
     # mock your "truth" data from "database"
-    n = 50
+    num_samples = 50
     # Use native polars operations instead of Python lists for better performance
-    ids = pl.arange(1, n + 1, eager=True)
+    ids = pl.arange(1, num_samples + 1, eager=True)
     df = pl.DataFrame(
         {
             "id": ids,
@@ -30,76 +30,75 @@ def load_truth_data() -> pl.DataFrame:
 
 def load_unknown_data() -> pl.DataFrame:
     # mock unknown_data from "database"
-    n = 20
-    start = 1000
+    num_samples = 20
+    unknown_data_start_id = 1000
     # Use native polars operations instead of Python lists for better performance
     return pl.DataFrame(
         {
-            "id": pl.arange(start, start + n, eager=True),
-            "feature_1": pl.arange(1, n + 1, eager=True) * 0.45,
-            "feature_2": pl.arange(1, n + 1, eager=True) % 7,
-            "feature_3": pl.arange(1, n + 1, eager=True) % 3,
+            "id": pl.arange(unknown_data_start_id, unknown_data_start_id + num_samples, eager=True),
+            "feature_1": pl.arange(1, num_samples + 1, eager=True) * 0.45,
+            "feature_2": pl.arange(1, num_samples + 1, eager=True) % 7,
+            "feature_3": pl.arange(1, num_samples + 1, eager=True) % 3,
         }
     )
 
 
 def select_target_and_features(df: pl.DataFrame):
-    cols = df.columns
+    available_columns = df.columns
     feature_cols = inquirer.checkbox(
         message="Select feature columns for training (SPACE to toggle, ENTER to confirm):",
-        choices=cols,
+        choices=available_columns,
         validate=lambda res: len(res) > 0 or "Select at least one feature.",
     ).execute()
 
-    remaining = [c for c in cols if c not in feature_cols]
+    remaining_columns = [column for column in available_columns if column not in feature_cols]
     target_col = inquirer.select(
         message="Select target label column:",
-        choices=remaining,
+        choices=remaining_columns,
     ).execute()
 
     return target_col, list(feature_cols)
 
 
-def align_unknown_columns(
+def align_unknown_data_columns(
     unknown_df: pl.DataFrame, selected_features: list[str]
 ) -> tuple[pl.DataFrame, list[str]]:
     # Use set for O(1) lookup instead of O(n) list membership check
     unknown_cols = set(unknown_df.columns)
     rename_map: dict[str, str] = {}
-    for feat in selected_features:
-        if feat not in unknown_cols:
+    for feature in selected_features:
+        if feature not in unknown_df.columns:
             choices = list(unknown_df.columns) + ["<skip>"]
-            mapped = inquirer.select(
-                message=f"Unknown data is missing feature '{feat}'. Map an existing column to it or <skip>:",
+            mapped_column = inquirer.select(
+                message=f"Unknown data is missing feature '{feature}'. Map an existing column to it or <skip>:",
                 choices=choices,
             ).execute()
-            if mapped != "<skip>":
-                rename_map[mapped] = feat
+            if mapped_column != "<skip>":
+                rename_map[mapped_column] = feature
 
     if rename_map:
         unknown_df = unknown_df.rename(rename_map)
         unknown_cols = set(unknown_df.columns)  # Update set after rename
 
-    # Use set intersection for faster filtering
-    missing_after = [c for c in selected_features if c not in unknown_cols]
-    if missing_after:
-        print("Dropping features not present in unknown_data:", missing_after)
-        selected_features = [c for c in selected_features if c in unknown_cols]
+    missing_features_after_mapping = [column for column in selected_features if column not in unknown_df.columns]
+    if missing_features_after_mapping:
+        print("Dropping features not present in unknown_data:", missing_features_after_mapping)
+        selected_features = [column for column in selected_features if column in unknown_df.columns]
 
     return unknown_df, selected_features
 
 
-def train_xgb(truth_df: pl.DataFrame, target_col: str, feature_cols: list[str]):
+def train_xgboost_classifier(truth_df: pl.DataFrame, target_col: str, feature_cols: list[str]):
     df_pd = truth_df.select(feature_cols + [target_col]).to_pandas()
-    X = df_pd[feature_cols]
-    y = df_pd[target_col]
+    feature_matrix = df_pd[feature_cols]
+    target_labels = df_pd[target_col]
 
-    le = LabelEncoder()
-    y_enc = le.fit_transform(y)
+    label_encoder = LabelEncoder()
+    encoded_target_labels = label_encoder.fit_transform(target_labels)
 
-    objective = "multi:softprob" if len(le.classes_) > 2 else "binary:logistic"
+    objective = "multi:softprob" if len(label_encoder.classes_) > 2 else "binary:logistic"
 
-    clf = XGBClassifier(
+    classifier = XGBClassifier(
         n_estimators=300,
         max_depth=6,
         learning_rate=0.1,
@@ -109,66 +108,66 @@ def train_xgb(truth_df: pl.DataFrame, target_col: str, feature_cols: list[str]):
         n_jobs=-1,
         random_state=42,
     )
-    clf.fit(X, y_enc)
-    return clf, le
+    classifier.fit(feature_matrix, encoded_target_labels)
+    return classifier, label_encoder
 
 
-def save_artifacts(clf: XGBClassifier, le: LabelEncoder):
-    model_path = inquirer.text(
+def save_artifacts(classifier: XGBClassifier, label_encoder: LabelEncoder):
+    model_output_path = inquirer.text(
         message="Path to save XGBoost model (.json):",
         default="xgb_model.json",
     ).execute()
-    le_path = inquirer.text(
+    label_encoder_output_path = inquirer.text(
         message="Path to save LabelEncoder (.joblib):",
         default="label_encoder.joblib",
     ).execute()
 
-    Path(model_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(le_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(model_output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(label_encoder_output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    clf.save_model(model_path)
-    joblib.dump(le, le_path)
-    print(f"Saved model -> {model_path}")
-    print(f"Saved label encoder -> {le_path}")
+    classifier.save_model(model_output_path)
+    joblib.dump(label_encoder, label_encoder_output_path)
+    print(f"Saved model -> {model_output_path}")
+    print(f"Saved label encoder -> {label_encoder_output_path}")
 
 
-def predict_unknowns(
-    clf: XGBClassifier,
-    le: LabelEncoder,
+def predict_unknown_data_labels(
+    classifier: XGBClassifier,
+    label_encoder: LabelEncoder,
     unknown_df: pl.DataFrame,
     feature_cols: list[str],
 ):
     # Use set for O(1) lookup instead of iterating through all columns
     unknown_cols = set(unknown_df.columns)
-    missing = [c for c in feature_cols if c not in unknown_cols]
-    if missing:
-        print("Cannot predict, unknown_data missing features:", missing)
+    missing_features = [column for column in feature_cols if column not in unknown_cols]
+    if missing_features:
+        print("Cannot predict, unknown_data missing features:", missing_features)
         return
 
     unk_pd = unknown_df.select(feature_cols).to_pandas()
-    proba = clf.predict_proba(unk_pd)
-    preds_idx = proba.argmax(axis=1)
-    preds = le.inverse_transform(preds_idx)
-    confidences = proba.max(axis=1)
+    class_probabilities = classifier.predict_proba(unk_pd)
+    predicted_class_indices = class_probabilities.argmax(axis=1)
+    predicted_labels = label_encoder.inverse_transform(predicted_class_indices)
+    prediction_confidences = class_probabilities.max(axis=1)
 
-    out_df = unknown_df.with_columns(
-        pl.Series("predicted_label", preds),
-        pl.Series("confidence", confidences),
+    predictions_df = unknown_df.with_columns(
+        pl.Series("predicted_label", predicted_labels),
+        pl.Series("confidence", prediction_confidences),
     )
 
     if inquirer.confirm(
         message="Save predictions for unknown_data?", default=True
     ).execute():
-        out_path = inquirer.text(
+        predictions_output_path = inquirer.text(
             message="Path to save predictions (auto .parquet / .csv):",
             default="unknown_predictions.parquet",
         ).execute()
-        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-        if out_path.lower().endswith(".csv"):
-            out_df.write_csv(out_path)
+        Path(predictions_output_path).parent.mkdir(parents=True, exist_ok=True)
+        if predictions_output_path.lower().endswith(".csv"):
+            predictions_df.write_csv(predictions_output_path)
         else:
-            out_df.write_parquet(out_path)
-        print(f"Saved predictions -> {out_path}")
+            predictions_df.write_parquet(predictions_output_path)
+        print(f"Saved predictions -> {predictions_output_path}")
 
 
 def main():
@@ -177,16 +176,16 @@ def main():
     unknown_df = load_unknown_data()
 
     target_col, feature_cols = select_target_and_features(truth_df)
-    unknown_df, feature_cols = align_unknown_columns(unknown_df, feature_cols)
+    unknown_df, feature_cols = align_unknown_data_columns(unknown_df, feature_cols)
 
     print("Training XGBoost model...")
-    clf, le = train_xgb(truth_df, target_col, feature_cols)
-    save_artifacts(clf, le)
+    classifier, label_encoder = train_xgboost_classifier(truth_df, target_col, feature_cols)
+    save_artifacts(classifier, label_encoder)
 
     if inquirer.confirm(
         message="Run predictions on unknown_data now?", default=True
     ).execute():
-        predict_unknowns(clf, le, unknown_df, feature_cols)
+        predict_unknown_data_labels(classifier, label_encoder, unknown_df, feature_cols)
 
 
 if __name__ == "__main__":
