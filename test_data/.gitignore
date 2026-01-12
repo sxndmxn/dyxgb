@@ -1,0 +1,8 @@
+# Ignore generated models and outputs from stress testing
+models/
+output/
+*.joblib
+*_results.json
+
+# But keep the simple test model as an example
+!models/simple_model.json

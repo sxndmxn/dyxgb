@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# dyxgb generated files
+*.joblib
+models/
+output/
