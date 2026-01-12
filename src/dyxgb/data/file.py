@@ -31,9 +31,7 @@ class FileLoader(BaseLoader):
         loader = loaders.get(suffix)
         if not loader:
             supported = ", ".join(loaders.keys())
-            raise ValueError(
-                f"Unsupported file format: {suffix}. Supported: {supported}"
-            )
+            raise ValueError(f"Unsupported file format: {suffix}. Supported: {supported}")
 
         return loader()
 

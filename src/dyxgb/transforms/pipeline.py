@@ -7,11 +7,11 @@ import joblib
 import polars as pl
 
 from dyxgb.transforms.base import BaseTransform
-from dyxgb.transforms.rename import RenameTransform
 from dyxgb.transforms.cast import CastTransform
-from dyxgb.transforms.missing import MissingTransform
-from dyxgb.transforms.features import FeatureTransform
 from dyxgb.transforms.encode import EncodeTransform
+from dyxgb.transforms.features import FeatureTransform
+from dyxgb.transforms.missing import MissingTransform
+from dyxgb.transforms.rename import RenameTransform
 from dyxgb.transforms.scale import ScaleTransform
 
 
@@ -241,9 +241,6 @@ class TransformPipeline:
 
             if cls_name not in transform_classes:
                 raise ValueError(f"Unknown transform class: {cls_name}")
-
-            # Create transform instance and restore params
-            transform_cls = transform_classes[cls_name]
 
             # Handle different constructors
             if cls_name == "RenameTransform":

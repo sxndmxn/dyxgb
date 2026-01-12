@@ -14,7 +14,7 @@ import json
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,7 +26,7 @@ from dyxgb import __version__
 from dyxgb.model.trainer import TaskType
 
 if TYPE_CHECKING:
-    from dyxgb.transforms import TransformPipeline
+    pass
 
 
 BUNDLE_EXTENSION = ".dyxgb"
@@ -67,7 +67,7 @@ class BundleMetadata:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "BundleMetadata":
+    def from_dict(cls, data: dict[str, Any]) -> BundleMetadata:
         """Create from dictionary."""
         return cls(
             dyxgb_version=data["dyxgb_version"],
@@ -143,7 +143,7 @@ def save_bundle(
         task_type=task_type_str,
         feature_columns=feature_columns,
         target_column=target_column,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         has_encoder=label_encoder is not None,
         has_pipeline=pipeline is not None,
         train_score=train_score,
@@ -319,7 +319,7 @@ def load_model_or_bundle(
         task_type=task_type.value,
         feature_columns=feature_columns,
         target_column="",  # Unknown in legacy format
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         has_encoder=label_encoder is not None,
         has_pipeline=pipeline is not None,
     )

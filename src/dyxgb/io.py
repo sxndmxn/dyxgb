@@ -12,7 +12,7 @@ import json
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, TextIO
 
 import polars as pl
 
@@ -146,8 +146,7 @@ def _read_stdin(input_format: str | InputFormat | None) -> pl.DataFrame:
             fmt = InputFormat(input_format.lower())
         except ValueError:
             raise UsageError(
-                f"Invalid input format: {input_format}. "
-                f"Stdin only supports: csv, jsonl"
+                f"Invalid input format: {input_format}. Stdin only supports: csv, jsonl"
             )
     else:
         fmt = input_format

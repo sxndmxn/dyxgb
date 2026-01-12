@@ -10,31 +10,31 @@ __version__ = "0.3.0"
 
 # Public API exports
 from dyxgb.api import (
-    train_model,
-    predict_df,
-    evaluate_df,
-    get_importance,
-    tune_model,
-    PredictResult,
     EvaluateResult,
     ImportanceResult,
+    PredictResult,
+    evaluate_df,
+    get_importance,
+    predict_df,
+    train_model,
+    tune_model,
 )
 from dyxgb.bundle import (
     Bundle,
     BundleMetadata,
     load_bundle,
-    save_bundle,
     load_model_or_bundle,
+    save_bundle,
 )
 from dyxgb.io import (
-    read_table,
-    write_table,
-    write_json,
+    EXIT_RUNTIME_ERROR,
+    EXIT_SUCCESS,
+    EXIT_USAGE_ERROR,
     InputFormat,
     OutputFormat,
-    EXIT_SUCCESS,
-    EXIT_RUNTIME_ERROR,
-    EXIT_USAGE_ERROR,
+    read_table,
+    write_json,
+    write_table,
 )
 
 __all__ = [

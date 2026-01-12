@@ -4,7 +4,6 @@ import polars as pl
 
 from dyxgb.transforms.base import StatelessTransform
 
-
 # Mapping from config strings to Polars dtypes
 DTYPE_MAP = {
     "int": pl.Int64,

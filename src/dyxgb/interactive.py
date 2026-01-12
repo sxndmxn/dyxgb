@@ -1,19 +1,15 @@
 """Interactive mode using InquirerPy prompts."""
 
-import polars as pl
-from InquirerPy import inquirer
 from pathlib import Path
 
-from dyxgb.data.file import FileLoader
+import polars as pl
+from InquirerPy import inquirer
+
 from dyxgb.data.database import load_from_uri
-from dyxgb.model.trainer import Trainer, TaskType, save_model
-from dyxgb.model.predictor import Predictor
-from dyxgb.evaluation.metrics import (
-    evaluate_classification,
-    evaluate_regression,
-    print_metrics,
-)
+from dyxgb.data.file import FileLoader
 from dyxgb.evaluation.importance import get_feature_importance, print_importance
+from dyxgb.model.predictor import Predictor
+from dyxgb.model.trainer import TaskType, Trainer, save_model
 
 
 def select_data_source() -> tuple[str, dict]:
@@ -125,7 +121,7 @@ def align_unknown_columns(
         if feat not in unknown_cols:
             choices = list(unknown_df.columns) + ["<skip>"]
             mapped = inquirer.select(
-                message=f"Unknown data is missing feature '{feat}'. Map an existing column to it or <skip>:",
+                message=f"Missing feature '{feat}'. Map a column or <skip>:",
                 choices=choices,
             ).execute()
             if mapped != "<skip>":

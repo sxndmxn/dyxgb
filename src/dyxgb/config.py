@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 from dyxgb.data.base import DataSource
-from dyxgb.model.trainer import TaskType, HyperParameters
+from dyxgb.model.trainer import HyperParameters, TaskType
 
 
 @dataclass

@@ -10,24 +10,23 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
 from dyxgb import __version__
 from dyxgb.io import (
-    EXIT_SUCCESS,
     EXIT_RUNTIME_ERROR,
     EXIT_USAGE_ERROR,
-    UsageError,
     RuntimeIOError,
-    read_table,
-    write_table,
-    write_json,
+    UsageError,
     is_stdin_source,
     is_stdout_dest,
     is_tty,
+    read_table,
     stderr_print,
+    write_json,
+    write_table,
 )
 
 app = typer.Typer(
@@ -41,6 +40,7 @@ def _stderr_console():
     """Get Rich console for stderr output."""
     try:
         from rich.console import Console
+
         return Console(stderr=True, force_terminal=is_tty(sys.stderr))
     except ImportError:
         return None
@@ -103,7 +103,7 @@ def interactive() -> None:
     try:
         from dyxgb.interactive import run_interactive
     except ImportError:
-        _error("Interactive mode requires 'inquirerpy'. Install with: pip install dyxgb[interactive]")
+        _error("Interactive mode requires 'inquirerpy'. Install: pip install dyxgb[interactive]")
         raise typer.Exit(EXIT_USAGE_ERROR)
 
     run_interactive()
@@ -112,27 +112,27 @@ def interactive() -> None:
 @app.command()
 def train(
     config: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--config", "-c", help="Path to YAML/TOML config file"),
     ] = None,
     source: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--source", "-s", help="Data source (file path or database URI)"),
     ] = None,
     query: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--query", "-q", help="SQL query for database sources"),
     ] = None,
     table: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--table", "-t", help="Table name for database sources"),
     ] = None,
     target: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--target", help="Target column name"),
     ] = None,
     features: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--features", "-f", help="Comma-separated feature column names"),
     ] = None,
     task: Annotated[
@@ -172,10 +172,10 @@ def train(
         # With hyperparameter tuning
         dyxgb train --source data.parquet --target y --tune --tune-trials 100
     """
+    from dyxgb.api import train_model, tune_model
+    from dyxgb.bundle import save_bundle
     from dyxgb.config import Config, DataSourceConfig, load_config
     from dyxgb.model.trainer import TaskType
-    from dyxgb.bundle import save_bundle
-    from dyxgb.api import train_model, tune_model, get_importance
     from dyxgb.transforms import TransformPipeline
 
     try:
@@ -332,15 +332,15 @@ def predict(
         typer.Option("--model", "-m", help="Path to model bundle or model.json"),
     ] = "model.dyxgb",
     encoder: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--encoder", "-e", help="Path to label encoder (legacy mode)"),
     ] = None,
     pipeline_input: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--pipeline", "-p", help="Path to transform pipeline (legacy mode)"),
     ] = None,
     features: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--features", "-f", help="Comma-separated feature column names"),
     ] = None,
     task: Annotated[
@@ -352,11 +352,11 @@ def predict(
         typer.Option("--output", "-o", help="Output path (- for stdout)"),
     ] = "-",
     input_format: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--input-format", help="Input format for stdin: csv or jsonl"),
     ] = None,
     output_format: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--output-format", help="Output format: csv, jsonl, parquet"),
     ] = None,
     quiet: Annotated[
@@ -383,8 +383,8 @@ def predict(
         # From file to file
         dyxgb predict --source data.csv --model model.dyxgb --output predictions.parquet
     """
-    from dyxgb.bundle import load_model_or_bundle
     from dyxgb.api import predict_df
+    from dyxgb.bundle import load_model_or_bundle
     from dyxgb.model.trainer import TaskType
 
     try:
@@ -463,7 +463,7 @@ def evaluate(
         typer.Option("--model", "-m", help="Path to model bundle or model.json"),
     ] = "model.dyxgb",
     encoder: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--encoder", "-e", help="Path to label encoder (legacy mode)"),
     ] = None,
     target: Annotated[
@@ -471,7 +471,7 @@ def evaluate(
         typer.Option("--target", help="Target column name in test data"),
     ] = "label",
     features: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--features", "-f", help="Comma-separated feature column names"),
     ] = None,
     task: Annotated[
@@ -499,8 +499,8 @@ def evaluate(
         # Parse with jq
         dyxgb evaluate --source test.csv --model model.dyxgb --target y | jq '.accuracy'
     """
-    from dyxgb.bundle import load_model_or_bundle
     from dyxgb.api import evaluate_df
+    from dyxgb.bundle import load_model_or_bundle
     from dyxgb.model.trainer import TaskType
 
     try:
@@ -561,7 +561,7 @@ def importance(
         typer.Option("--output", "-o", help="Output path (- for stdout)"),
     ] = "-",
     output_format: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--output-format", help="Output format: csv, jsonl, parquet"),
     ] = None,
     importance_type: Annotated[
@@ -569,7 +569,7 @@ def importance(
         typer.Option("--type", help="Importance type: weight, gain, cover"),
     ] = "gain",
     top_n: Annotated[
-        Optional[int],
+        int | None,
         typer.Option("--top", "-n", help="Limit to top N features"),
     ] = None,
     task: Annotated[
@@ -596,8 +596,8 @@ def importance(
         # Save to parquet file
         dyxgb importance --model model.dyxgb --output importance.parquet
     """
-    from dyxgb.bundle import load_model_or_bundle
     from dyxgb.api import get_importance
+    from dyxgb.bundle import load_model_or_bundle
     from dyxgb.model.trainer import TaskType
 
     try:

@@ -1,7 +1,5 @@
 """Feature engineering transform using Polars expressions."""
 
-from typing import Any
-
 import polars as pl
 
 from dyxgb.transforms.base import StatelessTransform

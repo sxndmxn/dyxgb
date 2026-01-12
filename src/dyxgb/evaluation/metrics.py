@@ -6,15 +6,15 @@ from typing import Any
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-    confusion_matrix,
     classification_report,
-    mean_squared_error,
+    confusion_matrix,
+    f1_score,
     mean_absolute_error,
+    mean_squared_error,
+    precision_score,
     r2_score,
+    recall_score,
+    roc_auc_score,
 )
 
 from dyxgb.model.trainer import TaskType
@@ -106,9 +106,7 @@ def evaluate_classification(
                 roc_auc = roc_auc_score(y_true, y_proba[:, 1])
             elif y_proba.ndim == 2 and y_proba.shape[1] > 2:
                 # Multi-class - use one-vs-rest
-                roc_auc = roc_auc_score(
-                    y_true, y_proba, multi_class="ovr", average=average
-                )
+                roc_auc = roc_auc_score(y_true, y_proba, multi_class="ovr", average=average)
         except ValueError:
             # ROC-AUC may fail for certain edge cases
             pass
@@ -153,11 +151,7 @@ def evaluate_regression(
     nonzero_mask = y_true != 0
     if nonzero_mask.any():
         mape = (
-            np.mean(
-                np.abs(
-                    (y_true[nonzero_mask] - y_pred[nonzero_mask]) / y_true[nonzero_mask]
-                )
-            )
+            np.mean(np.abs((y_true[nonzero_mask] - y_pred[nonzero_mask]) / y_true[nonzero_mask]))
             * 100
         )
 
@@ -182,7 +176,6 @@ def print_metrics(
     """
     try:
         from rich.console import Console
-        from rich.table import Table
 
         console = Console()
         _print_metrics_rich(console, metrics, task_type)
@@ -200,9 +193,7 @@ def _print_metrics_rich(
 
     if isinstance(metrics, ClassificationMetrics):
         title = (
-            "Classification Metrics"
-            if task_type is None
-            else f"{task_type.value.title()} Metrics"
+            "Classification Metrics" if task_type is None else f"{task_type.value.title()} Metrics"
         )
         table = Table(title=title)
         table.add_column("Metric", style="cyan")
@@ -222,11 +213,7 @@ def _print_metrics_rich(
             console.print(metrics.confusion_matrix)
 
     else:  # RegressionMetrics
-        title = (
-            "Regression Metrics"
-            if task_type is None
-            else f"{task_type.value.title()} Metrics"
-        )
+        title = "Regression Metrics" if task_type is None else f"{task_type.value.title()} Metrics"
         table = Table(title=title)
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green")

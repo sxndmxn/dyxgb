@@ -15,18 +15,16 @@ All functions here:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from dyxgb.model.trainer import TaskType, TrainResult, Trainer, HyperParameters
+from dyxgb.model.trainer import HyperParameters, TaskType, Trainer, TrainResult
 
 if TYPE_CHECKING:
-    from sklearn.preprocessing import LabelEncoder
-    from xgboost import XGBClassifier, XGBRegressor
-    from dyxgb.transforms import TransformPipeline
     from dyxgb.bundle import Bundle
+    from dyxgb.transforms import TransformPipeline
 
 
 @dataclass
@@ -57,10 +55,12 @@ class ImportanceResult:
 
     def to_dataframe(self) -> pl.DataFrame:
         """Convert to DataFrame with feature,importance columns."""
-        return pl.DataFrame({
-            "feature": self.features,
-            "importance": self.importance_values,
-        }).sort("importance", descending=True)
+        return pl.DataFrame(
+            {
+                "feature": self.features,
+                "importance": self.importance_values,
+            }
+        ).sort("importance", descending=True)
 
     def to_dict(self) -> dict[str, float]:
         """Convert to dict mapping feature -> importance."""
@@ -75,7 +75,7 @@ def train_model(
     hyperparameters: HyperParameters | dict[str, Any] | None = None,
     validation_split: float = 0.2,
     early_stopping_rounds: int | None = 50,
-    pipeline: "TransformPipeline | None" = None,
+    pipeline: TransformPipeline | None = None,
 ) -> TrainResult:
     """Train an XGBoost model.
 
@@ -111,7 +111,7 @@ def train_model(
 
 def predict_df(
     df: pl.DataFrame,
-    bundle: "Bundle",
+    bundle: Bundle,
     feature_columns: list[str] | None = None,
     include_probabilities: bool = True,
     output_columns: list[str] | None = None,
@@ -141,9 +141,7 @@ def predict_df(
         try:
             features = list(bundle.model.get_booster().feature_names or [])
         except (AttributeError, TypeError):
-            raise ValueError(
-                "Feature columns must be specified - not available in model or bundle"
-            )
+            raise ValueError("Feature columns must be specified - not available in model or bundle")
 
     # Create predictor and predict
     predictor = Predictor(
@@ -183,7 +181,7 @@ def _get_prediction_columns(df: pl.DataFrame, task_type: TaskType) -> list[str]:
 
 def evaluate_df(
     df: pl.DataFrame,
-    bundle: "Bundle",
+    bundle: Bundle,
     target_column: str,
     feature_columns: list[str] | None = None,
 ) -> EvaluateResult:
@@ -198,7 +196,6 @@ def evaluate_df(
     Returns:
         EvaluateResult with metrics dict.
     """
-    import numpy as np
     from dyxgb.evaluation.metrics import evaluate_classification, evaluate_regression
 
     # Get predictions
@@ -234,7 +231,7 @@ def evaluate_df(
 
 
 def get_importance(
-    bundle: "Bundle",
+    bundle: Bundle,
     importance_type: str = "gain",
 ) -> ImportanceResult:
     """Extract feature importance from model.

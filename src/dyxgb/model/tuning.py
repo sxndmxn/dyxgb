@@ -1,14 +1,15 @@
 """Hyperparameter tuning with Optuna."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import polars as pl
 from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier, XGBRegressor
 
-from dyxgb.model.trainer import TaskType, HyperParameters
+from dyxgb.model.trainer import HyperParameters, TaskType
 
 
 @dataclass
@@ -77,8 +78,7 @@ class OptunaOptimizer:
             from optuna.samplers import TPESampler
         except ImportError:
             raise ImportError(
-                "Optuna is required for hyperparameter tuning. "
-                "Install with: uv add optuna"
+                "Optuna is required for hyperparameter tuning. Install with: uv add optuna"
             )
 
         # Suppress optuna logging
@@ -137,27 +137,19 @@ class OptunaOptimizer:
                     params["objective"] = "multi:softprob"
                 else:
                     params["objective"] = "binary:logistic"
-                model = XGBClassifier(
-                    **params, n_jobs=self.n_jobs, random_state=self.random_state
-                )
+                model = XGBClassifier(**params, n_jobs=self.n_jobs, random_state=self.random_state)
             else:
                 params["objective"] = "reg:squarederror"
-                model = XGBRegressor(
-                    **params, n_jobs=self.n_jobs, random_state=self.random_state
-                )
+                model = XGBRegressor(**params, n_jobs=self.n_jobs, random_state=self.random_state)
 
             # Cross-validation
-            scores = cross_val_score(
-                model, X, y, cv=self.cv_folds, scoring=self.metric, n_jobs=1
-            )
+            scores = cross_val_score(model, X, y, cv=self.cv_folds, scoring=self.metric, n_jobs=1)
 
             return scores.mean()
 
         return objective
 
-    def _get_trial_params(
-        self, trial: Any, param_space: dict[str, Any] | None
-    ) -> dict[str, Any]:
+    def _get_trial_params(self, trial: Any, param_space: dict[str, Any] | None) -> dict[str, Any]:
         """Get parameters for a single trial."""
         if param_space:
             return {

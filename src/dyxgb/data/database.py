@@ -72,9 +72,7 @@ class DuckDBLoader(DatabaseLoader):
         try:
             import duckdb
         except ImportError:
-            raise ImportError(
-                "DuckDB is required for DuckDB sources. Install with: uv add duckdb"
-            )
+            raise ImportError("DuckDB is required for DuckDB sources. Install with: uv add duckdb")
 
         # Extract path from URI (duckdb:///path/to/db.duckdb or :memory:)
         parsed = urlparse(self.uri)
@@ -102,8 +100,7 @@ class PostgresLoader(DatabaseLoader):
             import connectorx as cx
         except ImportError:
             raise ImportError(
-                "connectorx is required for PostgreSQL sources. "
-                "Install with: uv add connectorx"
+                "connectorx is required for PostgreSQL sources. Install with: uv add connectorx"
             )
 
         # connectorx expects postgresql:// not postgres://
@@ -138,9 +135,7 @@ def get_database_loader(
     return loader_cls(uri, query=query, table=table)
 
 
-def load_from_uri(
-    uri: str, query: str | None = None, table: str | None = None
-) -> pl.DataFrame:
+def load_from_uri(uri: str, query: str | None = None, table: str | None = None) -> pl.DataFrame:
     """Auto-detect database type from URI and load data."""
     parsed = urlparse(uri)
     scheme = parsed.scheme.lower()
@@ -155,8 +150,7 @@ def load_from_uri(
     source_type = scheme_to_source.get(scheme)
     if not source_type:
         raise ValueError(
-            f"Unsupported URI scheme: {scheme}. "
-            f"Supported: {', '.join(scheme_to_source.keys())}"
+            f"Unsupported URI scheme: {scheme}. Supported: {', '.join(scheme_to_source.keys())}"
         )
 
     loader = get_database_loader(source_type, uri, query=query, table=table)

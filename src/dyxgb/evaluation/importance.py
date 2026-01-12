@@ -3,7 +3,6 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import polars as pl
 from xgboost import XGBClassifier, XGBRegressor
@@ -176,9 +175,7 @@ def print_importance(
         table.add_column("Feature", style="cyan")
         table.add_column("Importance", style="green", justify="right")
 
-        for i, (name, value) in enumerate(
-            zip(top.feature_names, top.importance_values), 1
-        ):
+        for i, (name, value) in enumerate(zip(top.feature_names, top.importance_values), 1):
             table.add_row(str(i), name, f"{value:.4f}")
 
         console.print(table)
@@ -188,7 +185,5 @@ def print_importance(
         print(f"\n=== Feature Importance ({importance.importance_type}) ===")
         print(f"{'Rank':<6}{'Feature':<30}{'Importance':>12}")
         print("-" * 48)
-        for i, (name, value) in enumerate(
-            zip(top.feature_names, top.importance_values), 1
-        ):
+        for i, (name, value) in enumerate(zip(top.feature_names, top.importance_values), 1):
             print(f"{i:<6}{name:<30}{value:>12.4f}")

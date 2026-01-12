@@ -46,9 +46,7 @@ class DataConfig:
             if not self.uri:
                 raise ValueError(f"{self.source_type.value} source requires 'uri'")
             if not self.query and not self.table:
-                raise ValueError(
-                    f"{self.source_type.value} source requires 'query' or 'table'"
-                )
+                raise ValueError(f"{self.source_type.value} source requires 'query' or 'table'")
 
 
 class BaseLoader(ABC):

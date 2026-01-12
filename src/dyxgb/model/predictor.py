@@ -3,7 +3,6 @@
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import polars as pl
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier, XGBRegressor
@@ -114,9 +113,7 @@ class Predictor:
         # Optionally add per-class probabilities
         if include_probabilities and self.label_encoder is not None:
             for i, class_name in enumerate(self.label_encoder.classes_):
-                result = result.with_columns(
-                    pl.Series(f"prob_{class_name}", proba[:, i])
-                )
+                result = result.with_columns(pl.Series(f"prob_{class_name}", proba[:, i]))
 
         return result
 
@@ -148,7 +145,5 @@ def predict_from_model(
     Returns:
         DataFrame with predictions added
     """
-    predictor = Predictor.from_files(
-        model_path, encoder_path, task_type, feature_columns
-    )
+    predictor = Predictor.from_files(model_path, encoder_path, task_type, feature_columns)
     return predictor.predict(df, include_probabilities=include_probabilities)
