@@ -21,19 +21,91 @@ data:
     type: file
     path: "data/predict.parquet"
 
-# Model configuration
+# =============================================================================
+# TRANSFORMS - Data preprocessing pipeline
+# =============================================================================
+# Transforms are applied in this order: rename -> cast -> missing -> features -> encode -> scale
+# The pipeline is fitted on training data and saved, then applied to prediction data.
+
+transforms:
+  # Column renaming - map different column names to canonical names
+  # This allows truth and unknown datasets with different schemas to work together
+  rename:
+    # Map multiple possible source names to a single canonical name
+    customer_id: id       # truth dataset column
+    cust_id: id           # unknown dataset column  
+    CustomerId: id        # another possible name
+    txn_amt: amount
+    transaction_amount: amount
+    Amount: amount
+
+  # Type casting - convert columns to specific types
+  cast:
+    amount: float
+    age: int
+    date: datetime
+    is_active: bool
+
+  # Missing value handling - impute or drop missing values
+  # Strategy options: mean, median, mode, constant, drop
+  missing:
+    strategy: median  # Default strategy for all columns
+    # Per-column overrides:
+    columns:
+      category: mode      # Use most frequent value for categoricals
+      notes: constant     # Use constant value
+    constant_value: "unknown"  # Value for 'constant' strategy
+
+  # Feature engineering - create new features using Polars expressions
+  # Full Polars expression syntax supported
+  features:
+    - name: amount_log
+      expr: "pl.col('amount').log1p()"
+    - name: age_squared
+      expr: "pl.col('age') ** 2"
+    - name: amount_per_age
+      expr: "pl.col('amount') / (pl.col('age') + 1)"
+    - name: is_high_value
+      expr: "pl.when(pl.col('amount') > 1000).then(1).otherwise(0)"
+
+  # Categorical encoding - convert string columns to integers (LabelEncoder)
+  # Fitted on training data, applied to prediction data
+  # Unknown categories in prediction data are mapped to unknown_value
+  encode:
+    columns:
+      - category
+      - region
+      - status
+    unknown_value: -1  # Value for categories not seen in training
+
+  # Scaling - normalize numeric columns (StandardScaler or MinMaxScaler)
+  # Fitted on training data (learns mean/std), applied to prediction data
+  scale:
+    method: standard  # Options: standard, minmax
+    columns:  # If omitted, scales all numeric columns except target
+      - amount
+      - age
+      - amount_log
+
+# =============================================================================
+# MODEL CONFIGURATION
+# =============================================================================
+
 model:
   # Task type: classification or regression
   task: classification
   
-  # Target column name
+  # Target column name (after transforms are applied)
   target: label
   
-  # Feature columns (leave empty to use all columns except target)
+  # Feature columns (after transforms - leave empty to use all except target)
   features:
-    - feature_1
-    - feature_2
-    - feature_3
+    - amount
+    - age
+    - amount_log
+    - age_squared
+    - category
+    - region
   
   # XGBoost hyperparameters
   hyperparameters:
@@ -67,6 +139,7 @@ tuning:
 output:
   model_path: "models/xgb_model.json"
   encoder_path: "models/label_encoder.joblib"
+  pipeline_path: "models/pipeline.joblib"  # Fitted transform pipeline
   predictions_path: "output/predictions.parquet"
   importance_path: "output/feature_importance.json"
   metrics_path: "output/metrics.json"

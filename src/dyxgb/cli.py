@@ -87,6 +87,10 @@ def train(
         Optional[str],
         typer.Option("--encoder-output", help="Output path for label encoder"),
     ] = None,
+    pipeline_output: Annotated[
+        Optional[str],
+        typer.Option("--pipeline", "-p", help="Output path for fitted transform pipeline"),
+    ] = None,
 ) -> None:
     """Train an XGBoost model.
 
@@ -103,14 +107,17 @@ def train(
 
         # With hyperparameter tuning
         dyxgb train --config config.yaml --tune --tune-trials 100
+
+        # With transform pipeline
+        dyxgb train --config config.yaml --pipeline pipeline.joblib
     """
-    import polars as pl
-    from dyxgb.config import Config, load_config
+    from dyxgb.config import Config, DataSourceConfig, load_config
     from dyxgb.data.file import FileLoader
     from dyxgb.data.database import load_from_uri
     from dyxgb.model.trainer import Trainer, TaskType, save_model
     from dyxgb.model.tuning import tune_hyperparameters
     from dyxgb.evaluation.importance import get_feature_importance, print_importance
+    from dyxgb.transforms import TransformPipeline
 
     # Load config if provided
     cfg = Config()
@@ -124,29 +131,11 @@ def train(
         if Path(source).exists() or not source.startswith(
             ("sqlite:", "duckdb:", "postgres:", "postgresql:")
         ):
-            cfg.data["train"] = type(
-                "DataSourceConfig",
-                (),
-                {
-                    "type": "file",
-                    "path": source,
-                    "uri": None,
-                    "query": None,
-                    "table": None,
-                },
-            )()
+            cfg.data["train"] = DataSourceConfig(type="file", path=source)
         else:
-            cfg.data["train"] = type(
-                "DataSourceConfig",
-                (),
-                {
-                    "type": "database",
-                    "path": None,
-                    "uri": source,
-                    "query": query,
-                    "table": table,
-                },
-            )()
+            cfg.data["train"] = DataSourceConfig(
+                type="database", uri=source, query=query, table=table
+            )
 
     if target:
         cfg.model.target = target
@@ -165,9 +154,7 @@ def train(
         )
         raise typer.Exit(1)
     if not cfg.model.target:
-        console.print(
-            "[red]Error: No target column specified. Use --target or config file[/red]"
-        )
+        console.print("[red]Error: No target column specified. Use --target or config file[/red]")
         raise typer.Exit(1)
 
     # Load training data
@@ -175,15 +162,24 @@ def train(
     train_source = cfg.data["train"]
 
     if train_source.type == "file":
+        assert train_source.path is not None
         df = FileLoader(train_source.path).load()
     else:
-        df = load_from_uri(
-            train_source.uri, query=train_source.query, table=train_source.table
-        )
+        assert train_source.uri is not None
+        df = load_from_uri(train_source.uri, query=train_source.query, table=train_source.table)
 
     console.print(f"[green]Loaded {len(df)} rows, {len(df.columns)} columns[/green]")
 
-    # Determine features
+    # Apply transforms if configured
+    pipeline: TransformPipeline | None = None
+    if cfg.transforms:
+        console.print("[cyan]Building transform pipeline...[/cyan]")
+        pipeline = TransformPipeline.from_config(cfg.transforms.to_pipeline_config())
+        console.print(f"[cyan]Fitting and applying {len(pipeline)} transforms...[/cyan]")
+        df = pipeline.fit_transform(df, target_column=cfg.model.target)
+        console.print(f"[green]Transformed data: {len(df)} rows, {len(df.columns)} columns[/green]")
+
+    # Determine features (after transforms, since new columns may exist)
     feature_cols = cfg.model.features
     if not feature_cols:
         feature_cols = [c for c in df.columns if c != cfg.model.target]
@@ -235,6 +231,12 @@ def train(
     if enc_path:
         console.print(f"[green]Saved encoder -> {enc_path}[/green]")
 
+    # Save pipeline if configured
+    if pipeline is not None:
+        pipe_path = pipeline_output or cfg.output.pipeline_path
+        pipeline.save(pipe_path)
+        console.print(f"[green]Saved pipeline -> {pipe_path}[/green]")
+
 
 @app.command()
 def predict(
@@ -260,9 +262,11 @@ def predict(
     ] = "model.json",
     encoder: Annotated[
         Optional[str],
-        typer.Option(
-            "--encoder", "-e", help="Path to label encoder (for classification)"
-        ),
+        typer.Option("--encoder", "-e", help="Path to label encoder (for classification)"),
+    ] = None,
+    pipeline_input: Annotated[
+        Optional[str],
+        typer.Option("--pipeline", "-p", help="Path to fitted transform pipeline"),
     ] = None,
     features: Annotated[
         Optional[str],
@@ -287,15 +291,20 @@ def predict(
         # With classification encoder
         dyxgb predict --source data.csv --model model.json --encoder encoder.joblib
 
+        # With transform pipeline (for column mapping, scaling, etc.)
+        dyxgb predict --source data.csv --model model.json --pipeline pipeline.joblib
+
         # From database
         dyxgb predict --source "postgres://..." --query "SELECT * FROM new_data" --model model.json
     """
     from pathlib import Path as P
+
     from dyxgb.config import Config, load_config
     from dyxgb.data.file import FileLoader
     from dyxgb.data.database import load_from_uri
     from dyxgb.model.predictor import Predictor
     from dyxgb.model.trainer import TaskType
+    from dyxgb.transforms import TransformPipeline
 
     # Load config if provided
     cfg = Config()
@@ -310,9 +319,7 @@ def predict(
         data_source = predict_cfg.path or predict_cfg.uri
 
     if not data_source:
-        console.print(
-            "[red]Error: No data source specified. Use --source or --config[/red]"
-        )
+        console.print("[red]Error: No data source specified. Use --source or --config[/red]")
         raise typer.Exit(1)
 
     # Load data
@@ -325,6 +332,17 @@ def predict(
         df = load_from_uri(data_source, query=query, table=table)
 
     console.print(f"[green]Loaded {len(df)} rows[/green]")
+
+    # Apply transforms if pipeline provided
+    pipe_path = pipeline_input or (
+        cfg.output.pipeline_path if P(cfg.output.pipeline_path).exists() else None
+    )
+    if pipe_path and P(pipe_path).exists():
+        console.print(f"[cyan]Loading transform pipeline from {pipe_path}...[/cyan]")
+        pipeline = TransformPipeline.load(pipe_path)
+        console.print(f"[cyan]Applying {len(pipeline)} transforms...[/cyan]")
+        df = pipeline.transform(df)
+        console.print(f"[green]Transformed data: {len(df)} rows, {len(df.columns)} columns[/green]")
 
     # Parse features
     feature_cols = None

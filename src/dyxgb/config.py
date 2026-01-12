@@ -71,11 +71,49 @@ class TuningConfig:
 
 
 @dataclass
+class TransformsConfig:
+    """Data transformation pipeline configuration."""
+
+    rename: dict[str, str] = field(default_factory=dict)
+    cast: dict[str, str] = field(default_factory=dict)
+    missing: dict[str, Any] = field(default_factory=dict)
+    features: list[dict[str, str]] = field(default_factory=list)
+    encode: dict[str, Any] = field(default_factory=dict)
+    scale: dict[str, Any] = field(default_factory=dict)
+
+    def to_pipeline_config(self) -> dict[str, Any]:
+        """Convert to format expected by TransformPipeline.from_config()."""
+        config: dict[str, Any] = {}
+
+        if self.rename:
+            config["rename"] = self.rename
+        if self.cast:
+            config["cast"] = self.cast
+        if self.missing:
+            config["missing"] = self.missing
+        if self.features:
+            config["features"] = self.features
+        if self.encode:
+            config["encode"] = self.encode
+        if self.scale:
+            config["scale"] = self.scale
+
+        return config
+
+    def __bool__(self) -> bool:
+        """Return True if any transforms are configured."""
+        return bool(
+            self.rename or self.cast or self.missing or self.features or self.encode or self.scale
+        )
+
+
+@dataclass
 class OutputConfig:
     """Output paths configuration."""
 
     model_path: str = "model.json"
     encoder_path: str = "label_encoder.joblib"
+    pipeline_path: str = "pipeline.joblib"
     predictions_path: str = "predictions.parquet"
     importance_path: str = "feature_importance.json"
     metrics_path: str | None = None
@@ -86,9 +124,7 @@ class EvaluationConfig:
     """Evaluation configuration."""
 
     show_metrics: bool = True
-    metrics: list[str] = field(
-        default_factory=lambda: ["accuracy", "f1", "precision", "recall"]
-    )
+    metrics: list[str] = field(default_factory=lambda: ["accuracy", "f1", "precision", "recall"])
     show_importance: bool = True
     importance_type: str = "gain"
     top_n_features: int = 20
@@ -99,6 +135,7 @@ class Config:
     """Main configuration container."""
 
     data: dict[str, DataSourceConfig] = field(default_factory=dict)
+    transforms: TransformsConfig = field(default_factory=TransformsConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     tuning: TuningConfig = field(default_factory=TuningConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
@@ -113,6 +150,18 @@ class Config:
         if "data" in data:
             for name, source_data in data["data"].items():
                 config.data[name] = DataSourceConfig(**source_data)
+
+        # Parse transforms config
+        if "transforms" in data:
+            transforms_data = data["transforms"]
+            config.transforms = TransformsConfig(
+                rename=transforms_data.get("rename", {}),
+                cast=transforms_data.get("cast", {}),
+                missing=transforms_data.get("missing", {}),
+                features=transforms_data.get("features", []),
+                encode=transforms_data.get("encode", {}),
+                scale=transforms_data.get("scale", {}),
+            )
 
         # Parse model config
         if "model" in data:
@@ -176,7 +225,7 @@ class Config:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary."""
-        return {
+        result: dict[str, Any] = {
             "data": {
                 name: {
                     "type": src.type,
@@ -205,6 +254,7 @@ class Config:
             "output": {
                 "model_path": self.output.model_path,
                 "encoder_path": self.output.encoder_path,
+                "pipeline_path": self.output.pipeline_path,
                 "predictions_path": self.output.predictions_path,
                 "importance_path": self.output.importance_path,
                 "metrics_path": self.output.metrics_path,
@@ -217,6 +267,19 @@ class Config:
                 "top_n_features": self.evaluation.top_n_features,
             },
         }
+
+        # Only include transforms if configured
+        if self.transforms:
+            result["transforms"] = {
+                "rename": self.transforms.rename,
+                "cast": self.transforms.cast,
+                "missing": self.transforms.missing,
+                "features": self.transforms.features,
+                "encode": self.transforms.encode,
+                "scale": self.transforms.scale,
+            }
+
+        return result
 
     def to_yaml(self, path: str | Path) -> None:
         """Save configuration to YAML file."""
