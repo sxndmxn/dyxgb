@@ -1,3 +1,67 @@
-"""Dynamic XGBoost - A flexible CLI tool for XGBoost training and prediction."""
+"""Dynamic XGBoost - A flexible CLI tool for XGBoost training and prediction.
 
-__version__ = "0.2.0"
+Unix Philosophy:
+- stdout: data only (CSV, JSONL, JSON)
+- stderr: logs, progress, human-readable output
+- Exit codes: 0 (success), 1 (runtime error), 2 (usage error)
+"""
+
+__version__ = "0.3.0"
+
+# Public API exports
+from dyxgb.api import (
+    train_model,
+    predict_df,
+    evaluate_df,
+    get_importance,
+    tune_model,
+    PredictResult,
+    EvaluateResult,
+    ImportanceResult,
+)
+from dyxgb.bundle import (
+    Bundle,
+    BundleMetadata,
+    load_bundle,
+    save_bundle,
+    load_model_or_bundle,
+)
+from dyxgb.io import (
+    read_table,
+    write_table,
+    write_json,
+    InputFormat,
+    OutputFormat,
+    EXIT_SUCCESS,
+    EXIT_RUNTIME_ERROR,
+    EXIT_USAGE_ERROR,
+)
+
+__all__ = [
+    # Version
+    "__version__",
+    # API
+    "train_model",
+    "predict_df",
+    "evaluate_df",
+    "get_importance",
+    "tune_model",
+    "PredictResult",
+    "EvaluateResult",
+    "ImportanceResult",
+    # Bundle
+    "Bundle",
+    "BundleMetadata",
+    "load_bundle",
+    "save_bundle",
+    "load_model_or_bundle",
+    # I/O
+    "read_table",
+    "write_table",
+    "write_json",
+    "InputFormat",
+    "OutputFormat",
+    "EXIT_SUCCESS",
+    "EXIT_RUNTIME_ERROR",
+    "EXIT_USAGE_ERROR",
+]

@@ -205,12 +205,11 @@ wheels = [
 
 [[package]]
 name = "dyxgb"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "connectorx" },
     { name = "duckdb" },
-    { name = "inquirerpy" },
     { name = "joblib" },
     { name = "pandas" },
     { name = "polars" },
@@ -224,6 +223,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "inquirerpy" },
     { name = "optuna" },
     { name = "psycopg2-binary" },
 ]
@@ -232,6 +232,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+]
+interactive = [
+    { name = "inquirerpy" },
 ]
 postgres = [
     { name = "psycopg2-binary" },
@@ -244,7 +247,8 @@ tuning = [
 requires-dist = [
     { name = "connectorx", specifier = ">=0.3.0" },
     { name = "duckdb", specifier = ">=0.10.0" },
-    { name = "inquirerpy", specifier = ">=0.3.4" },
+    { name = "inquirerpy", marker = "extra == 'all'", specifier = ">=0.3.4" },
+    { name = "inquirerpy", marker = "extra == 'interactive'", specifier = ">=0.3.4" },
     { name = "joblib", specifier = ">=1.3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "optuna", marker = "extra == 'all'", specifier = ">=3.5.0" },
@@ -263,7 +267,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.12.0" },
     { name = "xgboost", specifier = ">=2.0.0" },
 ]
-provides-extras = ["postgres", "tuning", "all", "dev"]
+provides-extras = ["interactive", "postgres", "tuning", "all", "dev"]
 
 [[package]]
 name = "greenlet"

@@ -1,24 +1,88 @@
-"""Command-line interface for dyxgb."""
+"""Command-line interface for dyxgb.
 
+Unix Philosophy:
+- stdout: data only (CSV, JSONL, JSON)
+- stderr: logs, progress, human-readable output
+- Exit codes: 0 (success), 1 (runtime error), 2 (usage error)
+"""
+
+from __future__ import annotations
+
+import sys
 from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
-from rich.console import Console
 
 from dyxgb import __version__
+from dyxgb.io import (
+    EXIT_SUCCESS,
+    EXIT_RUNTIME_ERROR,
+    EXIT_USAGE_ERROR,
+    UsageError,
+    RuntimeIOError,
+    read_table,
+    write_table,
+    write_json,
+    is_stdin_source,
+    is_stdout_dest,
+    is_tty,
+    stderr_print,
+)
 
 app = typer.Typer(
     name="dyxgb",
     help="Dynamic XGBoost - A flexible CLI tool for XGBoost training and prediction.",
     add_completion=False,
 )
-console = Console()
+
+
+def _stderr_console():
+    """Get Rich console for stderr output."""
+    try:
+        from rich.console import Console
+        return Console(stderr=True, force_terminal=is_tty(sys.stderr))
+    except ImportError:
+        return None
+
+
+console = _stderr_console()
+
+
+def _print(msg: str, style: str | None = None) -> None:
+    """Print to stderr with optional Rich styling."""
+    if console:
+        if style:
+            console.print(f"[{style}]{msg}[/{style}]")
+        else:
+            console.print(msg)
+    else:
+        stderr_print(msg)
+
+
+def _error(msg: str) -> None:
+    """Print error to stderr."""
+    _print(f"Error: {msg}", "red")
+
+
+def _info(msg: str) -> None:
+    """Print info to stderr."""
+    _print(msg, "cyan")
+
+
+def _success(msg: str) -> None:
+    """Print success to stderr."""
+    _print(msg, "green")
+
+
+def _warning(msg: str) -> None:
+    """Print warning to stderr."""
+    _print(msg, "yellow")
 
 
 def version_callback(value: bool) -> None:
     if value:
-        console.print(f"dyxgb version {__version__}")
+        stderr_print(f"dyxgb version {__version__}")
         raise typer.Exit()
 
 
@@ -36,7 +100,11 @@ def main(
 @app.command()
 def interactive() -> None:
     """Run in interactive mode with prompts."""
-    from dyxgb.interactive import run_interactive
+    try:
+        from dyxgb.interactive import run_interactive
+    except ImportError:
+        _error("Interactive mode requires 'inquirerpy'. Install with: pip install dyxgb[interactive]")
+        raise typer.Exit(EXIT_USAGE_ERROR)
 
     run_interactive()
 
@@ -81,192 +149,195 @@ def train(
     ] = 50,
     output: Annotated[
         str,
-        typer.Option("--output", "-o", help="Output path for model"),
-    ] = "model.json",
-    encoder_output: Annotated[
-        Optional[str],
-        typer.Option("--encoder-output", help="Output path for label encoder"),
-    ] = None,
-    pipeline_output: Annotated[
-        Optional[str],
-        typer.Option("--pipeline", "-p", help="Output path for fitted transform pipeline"),
-    ] = None,
+        typer.Option("--output", "-o", help="Output path for model bundle"),
+    ] = "model.dyxgb",
+    quiet: Annotated[
+        bool,
+        typer.Option("--quiet", help="Minimize stderr output"),
+    ] = False,
 ) -> None:
     """Train an XGBoost model.
 
+    Training ONLY supports file or database sources (not stdin).
+    Output is a .dyxgb bundle file containing model, encoder, and metadata.
+
     Examples:
 
-        # From config file
-        dyxgb train --config config.yaml
-
         # From file source
-        dyxgb train --source data.csv --target label --features "f1,f2,f3"
+        dyxgb train --source data.csv --target label --output model.dyxgb
 
         # From database
-        dyxgb train --source "postgres://user:pass@host/db" --query "SELECT * FROM train" --target label
+        dyxgb train --source "postgres://..." --query "SELECT * FROM train" --target label
 
         # With hyperparameter tuning
-        dyxgb train --config config.yaml --tune --tune-trials 100
-
-        # With transform pipeline
-        dyxgb train --config config.yaml --pipeline pipeline.joblib
+        dyxgb train --source data.parquet --target y --tune --tune-trials 100
     """
     from dyxgb.config import Config, DataSourceConfig, load_config
-    from dyxgb.data.file import FileLoader
-    from dyxgb.data.database import load_from_uri
-    from dyxgb.model.trainer import Trainer, TaskType, save_model
-    from dyxgb.model.tuning import tune_hyperparameters
-    from dyxgb.evaluation.importance import get_feature_importance, print_importance
+    from dyxgb.model.trainer import TaskType
+    from dyxgb.bundle import save_bundle
+    from dyxgb.api import train_model, tune_model, get_importance
     from dyxgb.transforms import TransformPipeline
 
-    # Load config if provided
-    cfg = Config()
-    if config:
-        console.print(f"[cyan]Loading config from {config}[/cyan]")
-        cfg = load_config(config)
+    try:
+        # Reject stdin for training
+        if source == "-":
+            _error("Training from stdin is not supported. Use a file path or database URI.")
+            raise typer.Exit(EXIT_USAGE_ERROR)
 
-    # Override with CLI arguments
-    if source:
-        # Detect if file or database URI
-        if Path(source).exists() or not source.startswith(
-            ("sqlite:", "duckdb:", "postgres:", "postgresql:")
-        ):
-            cfg.data["train"] = DataSourceConfig(type="file", path=source)
-        else:
-            cfg.data["train"] = DataSourceConfig(
-                type="database", uri=source, query=query, table=table
+        # Load config if provided
+        cfg = Config()
+        if config:
+            if not quiet:
+                _info(f"Loading config from {config}")
+            cfg = load_config(config)
+
+        # Override with CLI arguments
+        if source:
+            if Path(source).exists() or not source.startswith(
+                ("sqlite:", "duckdb:", "postgres:", "postgresql:")
+            ):
+                cfg.data["train"] = DataSourceConfig(type="file", path=source)
+            else:
+                cfg.data["train"] = DataSourceConfig(
+                    type="database", uri=source, query=query, table=table
+                )
+
+        if target:
+            cfg.model.target = target
+        if features:
+            cfg.model.features = [f.strip() for f in features.split(",")]
+
+        # Validate required fields
+        if "train" not in cfg.data:
+            _error("No training data source specified. Use --source or --config")
+            raise typer.Exit(EXIT_USAGE_ERROR)
+        if not cfg.model.target:
+            _error("No target column specified. Use --target or config file")
+            raise typer.Exit(EXIT_USAGE_ERROR)
+
+        # Load training data
+        if not quiet:
+            _info("Loading training data...")
+
+        train_source = cfg.data["train"]
+        data_source = train_source.path or train_source.uri
+        if not data_source:
+            _error("Invalid data source configuration")
+            raise typer.Exit(EXIT_USAGE_ERROR)
+
+        df = read_table(data_source, query=train_source.query, table=train_source.table)
+
+        if not quiet:
+            _success(f"Loaded {len(df)} rows, {len(df.columns)} columns")
+
+        # Apply transforms if configured
+        pipeline: TransformPipeline | None = None
+        if cfg.transforms:
+            if not quiet:
+                _info("Building transform pipeline...")
+            pipeline = TransformPipeline.from_config(cfg.transforms.to_pipeline_config())
+            if not quiet:
+                _info(f"Fitting and applying {len(pipeline)} transforms...")
+            df = pipeline.fit_transform(df, target_column=cfg.model.target)
+            if not quiet:
+                _success(f"Transformed data: {len(df)} rows, {len(df.columns)} columns")
+
+        # Determine features
+        feature_cols = cfg.model.features
+        if not feature_cols:
+            feature_cols = [c for c in df.columns if c != cfg.model.target]
+            if not quiet:
+                _warning(f"Using all columns as features: {feature_cols}")
+
+        task_type = TaskType(task)
+
+        # Hyperparameter tuning
+        hyperparameters = None
+        if tune:
+            if not quiet:
+                _info(f"Running {tune_trials} hyperparameter optimization trials...")
+            hyperparameters = tune_model(
+                df,
+                cfg.model.target,
+                feature_cols,
+                task_type=task_type,
+                n_trials=tune_trials,
+                metric=cfg.tuning.metric,
             )
+            if not quiet:
+                _success("Tuning complete!")
 
-    if target:
-        cfg.model.target = target
-    if features:
-        cfg.model.features = [f.strip() for f in features.split(",")]
-    if task:
-        cfg.model.task = task
-    if tune:
-        cfg.tuning.enabled = True
-        cfg.tuning.n_trials = tune_trials
+        # Train model
+        if not quiet:
+            _info("Training XGBoost model...")
 
-    # Validate required fields
-    if "train" not in cfg.data:
-        console.print(
-            "[red]Error: No training data source specified. Use --source or --config[/red]"
-        )
-        raise typer.Exit(1)
-    if not cfg.model.target:
-        console.print("[red]Error: No target column specified. Use --target or config file[/red]")
-        raise typer.Exit(1)
-
-    # Load training data
-    console.print("[cyan]Loading training data...[/cyan]")
-    train_source = cfg.data["train"]
-
-    if train_source.type == "file":
-        assert train_source.path is not None
-        df = FileLoader(train_source.path).load()
-    else:
-        assert train_source.uri is not None
-        df = load_from_uri(train_source.uri, query=train_source.query, table=train_source.table)
-
-    console.print(f"[green]Loaded {len(df)} rows, {len(df.columns)} columns[/green]")
-
-    # Apply transforms if configured
-    pipeline: TransformPipeline | None = None
-    if cfg.transforms:
-        console.print("[cyan]Building transform pipeline...[/cyan]")
-        pipeline = TransformPipeline.from_config(cfg.transforms.to_pipeline_config())
-        console.print(f"[cyan]Fitting and applying {len(pipeline)} transforms...[/cyan]")
-        df = pipeline.fit_transform(df, target_column=cfg.model.target)
-        console.print(f"[green]Transformed data: {len(df)} rows, {len(df.columns)} columns[/green]")
-
-    # Determine features (after transforms, since new columns may exist)
-    feature_cols = cfg.model.features
-    if not feature_cols:
-        feature_cols = [c for c in df.columns if c != cfg.model.target]
-        console.print(f"[yellow]Using all columns as features: {feature_cols}[/yellow]")
-
-    task_type = TaskType(cfg.model.task)
-
-    # Hyperparameter tuning
-    hyperparameters = None
-    if cfg.tuning.enabled:
-        console.print(
-            f"[cyan]Running {cfg.tuning.n_trials} hyperparameter optimization trials...[/cyan]"
-        )
-        hyperparameters = tune_hyperparameters(
+        result = train_model(
             df,
             cfg.model.target,
             feature_cols,
             task_type=task_type,
-            n_trials=cfg.tuning.n_trials,
-            metric=cfg.tuning.metric,
+            hyperparameters=hyperparameters or cfg.model.get_hyperparameters(),
+            validation_split=cfg.model.validation_split,
+            early_stopping_rounds=cfg.model.early_stopping_rounds,
         )
-        console.print("[green]Tuning complete![/green]")
 
-    # Train model
-    console.print("[cyan]Training XGBoost model...[/cyan]")
-    trainer = Trainer(
-        task_type=task_type,
-        hyperparameters=hyperparameters or cfg.model.get_hyperparameters(),
-        validation_split=cfg.model.validation_split,
-        early_stopping_rounds=cfg.model.early_stopping_rounds,
-    )
-    result = trainer.train(df, cfg.model.target, feature_cols)
+        if not quiet:
+            _success(f"Training score: {result.train_score:.4f}")
+            _success(f"Validation score: {result.val_score:.4f}")
 
-    console.print(f"[green]Training score: {result.train_score:.4f}[/green]")
-    console.print(f"[green]Validation score: {result.val_score:.4f}[/green]")
+        # Save bundle
+        output_path = Path(output)
 
-    # Show feature importance
-    importance = get_feature_importance(result.model, importance_type="gain")
-    print_importance(importance, top_n=min(20, len(feature_cols)))
+        # Safety: refuse to write binary to TTY stdout
+        if str(output) == "-":
+            if is_tty(sys.stdout):
+                _error("Cannot write binary bundle to terminal. Use --output FILE or redirect.")
+                raise typer.Exit(EXIT_USAGE_ERROR)
+            # Writing to stdout pipe is allowed but unusual for training
+            _warning("Writing bundle to stdout...")
 
-    # Save model
-    model_path = output or cfg.output.model_path
-    enc_path = encoder_output or (
-        cfg.output.encoder_path if task_type == TaskType.CLASSIFICATION else None
-    )
+        save_bundle(
+            output_path,
+            result.model,
+            task_type,
+            feature_cols,
+            cfg.model.target,
+            label_encoder=result.label_encoder,
+            pipeline=pipeline,
+            train_score=result.train_score,
+            val_score=result.val_score,
+        )
 
-    save_model(result, model_path, enc_path)
-    console.print(f"[green]Saved model -> {model_path}[/green]")
-    if enc_path:
-        console.print(f"[green]Saved encoder -> {enc_path}[/green]")
+        if not quiet:
+            _success(f"Saved model bundle -> {output}")
 
-    # Save pipeline if configured
-    if pipeline is not None:
-        pipe_path = pipeline_output or cfg.output.pipeline_path
-        pipeline.save(pipe_path)
-        console.print(f"[green]Saved pipeline -> {pipe_path}[/green]")
+    except typer.Exit:
+        raise  # Re-raise Exit exceptions to preserve exit code
+    except (UsageError, RuntimeIOError) as e:
+        _error(str(e))
+        raise typer.Exit(e.exit_code)
+    except Exception as e:
+        _error(f"Training failed: {e}")
+        raise typer.Exit(EXIT_RUNTIME_ERROR)
 
 
 @app.command()
 def predict(
-    config: Annotated[
-        Optional[Path],
-        typer.Option("--config", "-c", help="Path to YAML/TOML config file"),
-    ] = None,
     source: Annotated[
-        Optional[str],
-        typer.Option("--source", "-s", help="Data source (file path or database URI)"),
-    ] = None,
-    query: Annotated[
-        Optional[str],
-        typer.Option("--query", "-q", help="SQL query for database sources"),
-    ] = None,
-    table: Annotated[
-        Optional[str],
-        typer.Option("--table", "-t", help="Table name for database sources"),
-    ] = None,
+        str,
+        typer.Option("--source", "-s", help="Data source (file, database URI, or - for stdin)"),
+    ] = "-",
     model: Annotated[
         str,
-        typer.Option("--model", "-m", help="Path to trained model"),
-    ] = "model.json",
+        typer.Option("--model", "-m", help="Path to model bundle or model.json"),
+    ] = "model.dyxgb",
     encoder: Annotated[
         Optional[str],
-        typer.Option("--encoder", "-e", help="Path to label encoder (for classification)"),
+        typer.Option("--encoder", "-e", help="Path to label encoder (legacy mode)"),
     ] = None,
     pipeline_input: Annotated[
         Optional[str],
-        typer.Option("--pipeline", "-p", help="Path to fitted transform pipeline"),
+        typer.Option("--pipeline", "-p", help="Path to transform pipeline (legacy mode)"),
     ] = None,
     features: Annotated[
         Optional[str],
@@ -274,104 +345,111 @@ def predict(
     ] = None,
     task: Annotated[
         str,
-        typer.Option("--task", help="Task type: classification or regression"),
+        typer.Option("--task", help="Task type (legacy mode): classification or regression"),
     ] = "classification",
     output: Annotated[
         str,
-        typer.Option("--output", "-o", help="Output path for predictions"),
-    ] = "predictions.parquet",
+        typer.Option("--output", "-o", help="Output path (- for stdout)"),
+    ] = "-",
+    input_format: Annotated[
+        Optional[str],
+        typer.Option("--input-format", help="Input format for stdin: csv or jsonl"),
+    ] = None,
+    output_format: Annotated[
+        Optional[str],
+        typer.Option("--output-format", help="Output format: csv, jsonl, parquet"),
+    ] = None,
+    quiet: Annotated[
+        bool,
+        typer.Option("--quiet", help="Minimize stderr output"),
+    ] = False,
 ) -> None:
     """Make predictions with a trained model.
 
+    Reads from stdin by default, writes CSV to stdout by default.
+    Perfect for Unix pipelines.
+
     Examples:
 
-        # Basic prediction
-        dyxgb predict --source data.csv --model model.json --output predictions.parquet
+        # Pipe from stdin to stdout (default)
+        dyxgb predict --model model.dyxgb < new.csv > preds.csv
 
-        # With classification encoder
-        dyxgb predict --source data.csv --model model.json --encoder encoder.joblib
+        # Explicit stdin/stdout
+        dyxgb predict --source - --output - --model model.dyxgb
 
-        # With transform pipeline (for column mapping, scaling, etc.)
-        dyxgb predict --source data.csv --model model.json --pipeline pipeline.joblib
+        # JSONL format
+        dyxgb predict --source - --input-format jsonl --output-format jsonl < data.jsonl
 
-        # From database
-        dyxgb predict --source "postgres://..." --query "SELECT * FROM new_data" --model model.json
+        # From file to file
+        dyxgb predict --source data.csv --model model.dyxgb --output predictions.parquet
     """
-    from pathlib import Path as P
-
-    from dyxgb.config import Config, load_config
-    from dyxgb.data.file import FileLoader
-    from dyxgb.data.database import load_from_uri
-    from dyxgb.model.predictor import Predictor
+    from dyxgb.bundle import load_model_or_bundle
+    from dyxgb.api import predict_df
     from dyxgb.model.trainer import TaskType
-    from dyxgb.transforms import TransformPipeline
 
-    # Load config if provided
-    cfg = Config()
-    if config:
-        console.print(f"[cyan]Loading config from {config}[/cyan]")
-        cfg = load_config(config)
+    try:
+        # Load model
+        if not quiet and not is_stdin_source(source):
+            _info("Loading model...")
 
-    # Determine source
-    data_source = source
-    if not data_source and "predict" in cfg.data:
-        predict_cfg = cfg.data["predict"]
-        data_source = predict_cfg.path or predict_cfg.uri
+        bundle = load_model_or_bundle(
+            model,
+            encoder_path=encoder,
+            pipeline_path=pipeline_input,
+            task_type=TaskType(task),
+        )
 
-    if not data_source:
-        console.print("[red]Error: No data source specified. Use --source or --config[/red]")
-        raise typer.Exit(1)
+        # Load data
+        if not quiet and not is_stdin_source(source):
+            _info("Loading prediction data...")
 
-    # Load data
-    console.print("[cyan]Loading prediction data...[/cyan]")
-    if P(data_source).exists() or not data_source.startswith(
-        ("sqlite:", "duckdb:", "postgres:", "postgresql:")
-    ):
-        df = FileLoader(data_source).load()
-    else:
-        df = load_from_uri(data_source, query=query, table=table)
+        df = read_table(source, input_format=input_format)
 
-    console.print(f"[green]Loaded {len(df)} rows[/green]")
+        if not quiet and not is_stdout_dest(output):
+            _success(f"Loaded {len(df)} rows")
 
-    # Apply transforms if pipeline provided
-    pipe_path = pipeline_input or (
-        cfg.output.pipeline_path if P(cfg.output.pipeline_path).exists() else None
-    )
-    if pipe_path and P(pipe_path).exists():
-        console.print(f"[cyan]Loading transform pipeline from {pipe_path}...[/cyan]")
-        pipeline = TransformPipeline.load(pipe_path)
-        console.print(f"[cyan]Applying {len(pipeline)} transforms...[/cyan]")
-        df = pipeline.transform(df)
-        console.print(f"[green]Transformed data: {len(df)} rows, {len(df.columns)} columns[/green]")
+        # Parse features
+        feature_cols = None
+        if features:
+            feature_cols = [f.strip() for f in features.split(",")]
 
-    # Parse features
-    feature_cols = None
-    if features:
-        feature_cols = [f.strip() for f in features.split(",")]
-    elif cfg.model.features:
-        feature_cols = cfg.model.features
+        # Make predictions
+        if not quiet and not is_stdout_dest(output):
+            _info("Making predictions...")
 
-    # Load model and make predictions
-    task_type = TaskType(task)
-    predictor = Predictor.from_files(model, encoder, task_type, feature_cols)
+        result = predict_df(
+            df,
+            bundle,
+            feature_columns=feature_cols,
+            include_probabilities=True,
+        )
 
-    console.print("[cyan]Making predictions...[/cyan]")
-    predictions = predictor.predict(df)
+        # Determine output columns (predictions only for clean output)
+        if bundle.task_type == TaskType.CLASSIFICATION:
+            output_cols = ["predicted_label", "confidence"]
+            # Add probability columns
+            output_cols.extend([c for c in result.predictions.columns if c.startswith("prob_")])
+        else:
+            output_cols = ["predicted_value"]
 
-    # Save predictions
-    output_path = P(output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Write output
+        write_table(
+            result.predictions.select(output_cols),
+            output,
+            output_format=output_format,
+        )
 
-    if output.lower().endswith(".csv"):
-        predictions.write_csv(output_path)
-    else:
-        predictions.write_parquet(output_path)
+        if not quiet and not is_stdout_dest(output):
+            _success(f"Saved {len(result.predictions)} predictions -> {output}")
 
-    console.print(f"[green]Saved {len(predictions)} predictions -> {output}[/green]")
-
-    # Show sample
-    console.print("\n[bold]Sample predictions:[/bold]")
-    console.print(predictions.head(5))
+    except typer.Exit:
+        raise
+    except (UsageError, RuntimeIOError) as e:
+        _error(str(e))
+        raise typer.Exit(e.exit_code)
+    except Exception as e:
+        _error(f"Prediction failed: {e}")
+        raise typer.Exit(EXIT_RUNTIME_ERROR)
 
 
 @app.command()
@@ -382,11 +460,11 @@ def evaluate(
     ],
     model: Annotated[
         str,
-        typer.Option("--model", "-m", help="Path to trained model"),
-    ] = "model.json",
+        typer.Option("--model", "-m", help="Path to model bundle or model.json"),
+    ] = "model.dyxgb",
     encoder: Annotated[
         Optional[str],
-        typer.Option("--encoder", "-e", help="Path to label encoder"),
+        typer.Option("--encoder", "-e", help="Path to label encoder (legacy mode)"),
     ] = None,
     target: Annotated[
         str,
@@ -398,114 +476,165 @@ def evaluate(
     ] = None,
     task: Annotated[
         str,
-        typer.Option("--task", help="Task type: classification or regression"),
+        typer.Option("--task", help="Task type (legacy mode): classification or regression"),
     ] = "classification",
+    output: Annotated[
+        str,
+        typer.Option("--output", "-o", help="Output path for metrics JSON (- for stdout)"),
+    ] = "-",
+    quiet: Annotated[
+        bool,
+        typer.Option("--quiet", help="Minimize stderr output"),
+    ] = False,
 ) -> None:
     """Evaluate model performance on test data.
 
+    Outputs a JSON object to stdout by default.
+
     Examples:
 
-        dyxgb evaluate --source test.csv --model model.json --target label
+        # Evaluate and get JSON metrics on stdout
+        dyxgb evaluate --source test.csv --model model.dyxgb --target label > metrics.json
+
+        # Parse with jq
+        dyxgb evaluate --source test.csv --model model.dyxgb --target y | jq '.accuracy'
     """
-    import numpy as np
-    from dyxgb.data.file import FileLoader
-    from dyxgb.model.predictor import Predictor
+    from dyxgb.bundle import load_model_or_bundle
+    from dyxgb.api import evaluate_df
     from dyxgb.model.trainer import TaskType
-    from dyxgb.evaluation.metrics import (
-        evaluate_classification,
-        evaluate_regression,
-        print_metrics,
-    )
 
-    # Load test data
-    console.print("[cyan]Loading test data...[/cyan]")
-    df = FileLoader(source).load()
-    console.print(f"[green]Loaded {len(df)} rows[/green]")
+    try:
+        # Load model
+        if not quiet:
+            _info("Loading model...")
 
-    # Parse features
-    feature_cols = None
-    if features:
-        feature_cols = [f.strip() for f in features.split(",")]
+        bundle = load_model_or_bundle(
+            model,
+            encoder_path=encoder,
+            task_type=TaskType(task),
+        )
 
-    # Load model and predict
-    task_type = TaskType(task)
-    predictor = Predictor.from_files(model, encoder, task_type, feature_cols)
+        # Load test data
+        if not quiet:
+            _info("Loading test data...")
 
-    console.print("[cyan]Making predictions...[/cyan]")
-    predictions = predictor.predict(df)
+        df = read_table(source)
 
-    # Get true and predicted values
-    y_true = df[target].to_numpy()
+        if not quiet:
+            _success(f"Loaded {len(df)} rows")
 
-    if task_type == TaskType.CLASSIFICATION:
-        y_pred = predictions["predicted_label"].to_numpy()
-        y_proba = None
-        if "confidence" in predictions.columns:
-            # For multi-class, we'd need all probabilities
-            y_proba = predictions.select(
-                [c for c in predictions.columns if c.startswith("prob_")]
-            ).to_numpy()
-            if y_proba.size == 0:
-                y_proba = None
+        # Parse features
+        feature_cols = None
+        if features:
+            feature_cols = [f.strip() for f in features.split(",")]
 
-        metrics = evaluate_classification(y_true, y_pred, y_proba)
-    else:
-        y_pred = predictions["predicted_value"].to_numpy()
-        metrics = evaluate_regression(y_true, y_pred)
+        # Evaluate
+        if not quiet:
+            _info("Evaluating model...")
 
-    print_metrics(metrics, task_type)
+        result = evaluate_df(df, bundle, target, feature_columns=feature_cols)
+
+        # Output JSON
+        write_json(result.metrics, output)
+
+        if not quiet and not is_stdout_dest(output):
+            _success(f"Saved metrics -> {output}")
+
+    except typer.Exit:
+        raise
+    except (UsageError, RuntimeIOError) as e:
+        _error(str(e))
+        raise typer.Exit(e.exit_code)
+    except Exception as e:
+        _error(f"Evaluation failed: {e}")
+        raise typer.Exit(EXIT_RUNTIME_ERROR)
 
 
 @app.command()
 def importance(
     model: Annotated[
         str,
-        typer.Option("--model", "-m", help="Path to trained model"),
-    ] = "model.json",
+        typer.Option("--model", "-m", help="Path to model bundle or model.json"),
+    ] = "model.dyxgb",
     output: Annotated[
+        str,
+        typer.Option("--output", "-o", help="Output path (- for stdout)"),
+    ] = "-",
+    output_format: Annotated[
         Optional[str],
-        typer.Option("--output", "-o", help="Output path (JSON, CSV, or Parquet)"),
+        typer.Option("--output-format", help="Output format: csv, jsonl, parquet"),
     ] = None,
     importance_type: Annotated[
         str,
         typer.Option("--type", help="Importance type: weight, gain, cover"),
     ] = "gain",
     top_n: Annotated[
-        int,
-        typer.Option("--top", "-n", help="Number of top features to show"),
-    ] = 20,
+        Optional[int],
+        typer.Option("--top", "-n", help="Limit to top N features"),
+    ] = None,
     task: Annotated[
         str,
-        typer.Option("--task", help="Task type: classification or regression"),
+        typer.Option("--task", help="Task type (legacy mode): classification or regression"),
     ] = "classification",
+    quiet: Annotated[
+        bool,
+        typer.Option("--quiet", help="Minimize stderr output"),
+    ] = False,
 ) -> None:
     """Show or export feature importance.
 
+    Outputs CSV to stdout by default with columns: feature,importance
+
     Examples:
 
-        # Show top 20 features
-        dyxgb importance --model model.json --top 20
+        # Get importance as CSV
+        dyxgb importance --model model.dyxgb > importance.csv
 
-        # Export to JSON
-        dyxgb importance --model model.json --output importance.json
+        # Get top 10 as JSONL
+        dyxgb importance --model model.dyxgb --top 10 --output-format jsonl
+
+        # Save to parquet file
+        dyxgb importance --model model.dyxgb --output importance.parquet
     """
-    from dyxgb.model.trainer import TaskType, load_model
-    from dyxgb.evaluation.importance import (
-        get_feature_importance,
-        export_importance,
-        print_importance,
-    )
+    from dyxgb.bundle import load_model_or_bundle
+    from dyxgb.api import get_importance
+    from dyxgb.model.trainer import TaskType
 
-    task_type = TaskType(task)
-    model_obj, _ = load_model(model, task_type=task_type)
+    try:
+        # Load model
+        if not quiet:
+            _info("Loading model...")
 
-    imp = get_feature_importance(model_obj, importance_type=importance_type)
+        bundle = load_model_or_bundle(model, task_type=TaskType(task))
 
-    if output:
-        export_importance(imp, output)
-        console.print(f"[green]Exported feature importance -> {output}[/green]")
-    else:
-        print_importance(imp, top_n=top_n)
+        # Get importance
+        result = get_importance(bundle, importance_type=importance_type)
+
+        # Convert to DataFrame
+        importance_df = result.to_dataframe()
+
+        # Apply top_n filter
+        if top_n is not None and top_n > 0:
+            importance_df = importance_df.head(top_n)
+
+        # Write output (CSV columns: feature,importance)
+        write_table(
+            importance_df.select(["feature", "importance"]),
+            output,
+            output_format=output_format,
+        )
+
+        if not quiet and not is_stdout_dest(output):
+            _success(f"Saved importance -> {output}")
+
+    except typer.Exit:
+        raise
+    except (UsageError, RuntimeIOError) as e:
+        _error(str(e))
+        raise typer.Exit(e.exit_code)
+    except Exception as e:
+        _error(f"Importance extraction failed: {e}")
+        raise typer.Exit(EXIT_RUNTIME_ERROR)
 
 
 if __name__ == "__main__":
