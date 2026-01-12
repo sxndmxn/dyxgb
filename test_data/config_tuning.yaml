@@ -1,0 +1,25 @@
+# Hyperparameter tuning configuration
+# Tests Optuna integration
+
+data:
+  train:
+    type: file
+    path: "test_data/classification_small.csv"
+
+model:
+  task: classification
+  target: label
+  features: []
+  
+  validation_split: 0.2
+
+tuning:
+  enabled: true
+  n_trials: 20
+  metric: f1_weighted
+  cv_folds: 3
+
+output:
+  model_path: "test_data/models/tuned_model.json"
+  encoder_path: "test_data/models/tuned_encoder.joblib"
+  predictions_path: "test_data/output/tuned_predictions.parquet"

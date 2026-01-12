@@ -1,0 +1,77 @@
+# Regression configuration
+# Tests regression task with transforms
+
+data:
+  train:
+    type: file
+    path: "test_data/regression_train.csv"
+  predict:
+    type: file
+    path: "test_data/regression_test.csv"
+
+transforms:
+  # Handle missing values
+  missing:
+    strategy: median
+    columns:
+      condition: mode
+      neighborhood: mode
+      property_type: mode
+  
+  # Feature engineering for real estate
+  features:
+    - name: age_of_property
+      expr: "2024 - pl.col('year_built')"
+    - name: sqft_per_bedroom
+      expr: "pl.col('square_feet') / (pl.col('bedrooms') + 1)"
+    - name: has_luxury_features
+      expr: "(pl.col('has_pool').cast(pl.Int32) + pl.col('has_garage').cast(pl.Int32)) > 1"
+    - name: lot_sqft_ratio
+      expr: "pl.col('square_feet') / (pl.col('lot_size') + 1)"
+  
+  # Encode categorical variables
+  encode:
+    columns:
+      - neighborhood
+      - property_type
+      - condition
+    unknown_value: -1
+  
+  # Scale features
+  scale:
+    method: standard
+    columns:
+      - square_feet
+      - lot_size
+      - bathrooms
+      - age_of_property
+
+model:
+  task: regression
+  target: price
+  features: []  # Auto-detect
+  
+  hyperparameters:
+    n_estimators: 200
+    max_depth: 6
+    learning_rate: 0.1
+    subsample: 0.8
+    colsample_bytree: 0.8
+    random_state: 42
+  
+  validation_split: 0.2
+  early_stopping_rounds: 20
+
+tuning:
+  enabled: false
+
+output:
+  model_path: "test_data/models/regression_model.json"
+  pipeline_path: "test_data/models/regression_pipeline.joblib"
+  predictions_path: "test_data/output/regression_predictions.parquet"
+
+evaluation:
+  show_metrics: true
+  show_importance: true
+  importance_type: gain
+  top_n_features: 15

@@ -1,0 +1,80 @@
+# Advanced classification with all transforms
+# Tests rename, cast, missing value handling, feature engineering, encoding, and scaling
+
+data:
+  train:
+    type: file
+    path: "test_data/classification_medium.parquet"
+  predict:
+    type: file
+    path: "test_data/classification_test.parquet"
+
+transforms:
+  # Handle missing values
+  missing:
+    strategy: median
+    columns:
+      region: mode
+      product_type: mode
+    constant_value: "unknown"
+  
+  # Feature engineering
+  features:
+    - name: age_income_ratio
+      expr: "pl.col('age') / (pl.col('income') + 1)"
+    - name: is_senior
+      expr: "pl.when(pl.col('age') >= 65).then(1).otherwise(0)"
+    - name: income_log
+      expr: "pl.col('income').log1p()"
+    - name: balance_category
+      expr: "pl.when(pl.col('account_balance') > 10000).then(1).otherwise(0)"
+  
+  # Encode categorical columns
+  encode:
+    columns:
+      - region
+      - product_type
+      - customer_segment
+    unknown_value: -1
+  
+  # Scale numeric features
+  scale:
+    method: standard
+    columns:
+      - age
+      - income
+      - credit_score
+      - account_balance
+      - income_log
+      - age_income_ratio
+
+model:
+  task: classification
+  target: label
+  features: []  # Use all after transforms
+  
+  hyperparameters:
+    n_estimators: 200
+    max_depth: 6
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    random_state: 42
+  
+  validation_split: 0.2
+  early_stopping_rounds: 20
+
+tuning:
+  enabled: false
+
+output:
+  model_path: "test_data/models/classification_advanced_model.json"
+  encoder_path: "test_data/models/classification_advanced_encoder.joblib"
+  pipeline_path: "test_data/models/classification_advanced_pipeline.joblib"
+  predictions_path: "test_data/output/classification_advanced_predictions.parquet"
+
+evaluation:
+  show_metrics: true
+  show_importance: true
+  importance_type: gain
+  top_n_features: 15

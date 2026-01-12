@@ -1,0 +1,33 @@
+# Database source configuration (SQLite)
+# Tests database loading capabilities
+
+data:
+  train:
+    type: database
+    uri: "sqlite:///test_data/test_data.sqlite"
+    table: "train_data"
+  predict:
+    type: database
+    uri: "sqlite:///test_data/test_data.sqlite"
+    table: "test_data"
+
+model:
+  task: classification
+  target: label
+  features: []
+  
+  hyperparameters:
+    n_estimators: 100
+    max_depth: 5
+    learning_rate: 0.1
+    random_state: 42
+  
+  validation_split: 0.2
+
+tuning:
+  enabled: false
+
+output:
+  model_path: "test_data/models/db_model.json"
+  encoder_path: "test_data/models/db_encoder.joblib"
+  predictions_path: "test_data/output/db_predictions.parquet"
