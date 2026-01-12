@@ -1,0 +1,86 @@
+# dyxgb Configuration Example
+# Copy this file to config.yaml and customize for your use case
+
+# Data sources configuration
+data:
+  # Training data source
+  train:
+    # Source type: file, sqlite, duckdb, or postgres
+    type: file
+    # For file sources:
+    path: "data/train.parquet"
+    # For database sources (uncomment and fill in):
+    # type: postgres
+    # uri: "postgres://user:password@localhost:5432/mydb"
+    # query: "SELECT * FROM training_data WHERE date > '2024-01-01'"
+    # Or use table instead of query:
+    # table: "training_data"
+
+  # Prediction data source (optional)
+  predict:
+    type: file
+    path: "data/predict.parquet"
+
+# Model configuration
+model:
+  # Task type: classification or regression
+  task: classification
+  
+  # Target column name
+  target: label
+  
+  # Feature columns (leave empty to use all columns except target)
+  features:
+    - feature_1
+    - feature_2
+    - feature_3
+  
+  # XGBoost hyperparameters
+  hyperparameters:
+    n_estimators: 300
+    max_depth: 6
+    learning_rate: 0.1
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 1
+    gamma: 0.0
+    reg_alpha: 0.0
+    reg_lambda: 1.0
+    random_state: 42
+  
+  # Training settings
+  validation_split: 0.2
+  early_stopping_rounds: 50
+
+# Hyperparameter tuning configuration (requires optuna)
+tuning:
+  enabled: false
+  n_trials: 50
+  # Metric for optimization (auto-selected if not specified)
+  # Classification: accuracy, f1_weighted, roc_auc
+  # Regression: neg_root_mean_squared_error, neg_mean_absolute_error, r2
+  metric: null
+  timeout: null  # Maximum time in seconds
+  cv_folds: 5
+
+# Output paths
+output:
+  model_path: "models/xgb_model.json"
+  encoder_path: "models/label_encoder.joblib"
+  predictions_path: "output/predictions.parquet"
+  importance_path: "output/feature_importance.json"
+  metrics_path: "output/metrics.json"
+
+# Evaluation settings
+evaluation:
+  show_metrics: true
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - roc_auc
+    - confusion_matrix
+  show_importance: true
+  importance_type: gain  # weight, gain, cover, total_gain, total_cover
+  top_n_features: 20
