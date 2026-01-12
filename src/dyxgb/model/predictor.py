@@ -62,8 +62,11 @@ class Predictor:
         if features is None:
             # Try to get from model
             try:
-                features = list(self.model.get_booster().feature_names)
-            except (AttributeError, TypeError):
+                feat_names = self.model.get_booster().feature_names
+                if feat_names is None:
+                    raise ValueError("No feature names in model")
+                features = list(feat_names)
+            except (AttributeError, TypeError, ValueError):
                 raise ValueError(
                     "Feature columns must be specified either in constructor, "
                     "predict() call, or be available in the model"

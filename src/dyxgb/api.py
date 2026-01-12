@@ -24,6 +24,7 @@ from dyxgb.model.trainer import HyperParameters, TaskType, Trainer, TrainResult
 
 if TYPE_CHECKING:
     from dyxgb.bundle import Bundle
+    from dyxgb.evaluation.metrics import ClassificationMetrics, RegressionMetrics
     from dyxgb.transforms import TransformPipeline
 
 
@@ -209,6 +210,7 @@ def evaluate_df(
     # Extract true and predicted values
     y_true = df[target_column].to_numpy()
 
+    metrics_obj: ClassificationMetrics | RegressionMetrics
     if bundle.task_type == TaskType.CLASSIFICATION:
         y_pred = pred_result.predictions["predicted_label"].to_numpy()
 
