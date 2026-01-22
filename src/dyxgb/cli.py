@@ -110,6 +110,102 @@ def interactive() -> None:
 
 
 @app.command()
+def functions(
+    category: Annotated[
+        str | None,
+        typer.Option("--category", "-c", help="Filter by category: math, string, date, null"),
+    ] = None,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", "-f", help="Output format: table, json, csv"),
+    ] = "table",
+) -> None:
+    """List available feature engineering functions.
+
+    Examples:
+
+        dyxgb functions
+        dyxgb functions --category math
+        dyxgb functions --format json
+        dyxgb functions --format csv
+    """
+    from dyxgb.transforms.registry import get_categories, list_functions
+
+    valid_formats = {"table", "json", "csv"}
+    if output_format not in valid_formats:
+        _error(f"Invalid format '{output_format}'. Use: {', '.join(sorted(valid_formats))}")
+        raise typer.Exit(EXIT_USAGE_ERROR)
+
+    if category:
+        categories = get_categories()
+        if category not in categories:
+            _error(f"Unknown category '{category}'. Use: {', '.join(categories)}")
+            raise typer.Exit(EXIT_USAGE_ERROR)
+
+    funcs = list_functions(category)
+
+    if output_format == "json":
+        data = [
+            {
+                "name": f.name,
+                "description": f.description,
+                "category": f.category,
+                "params": f.params,
+                "example": f.example,
+            }
+            for f in funcs
+        ]
+        write_json(data, "-")
+        return
+
+    if output_format == "csv":
+        import csv
+
+        writer = csv.writer(sys.stdout)
+        writer.writerow(["name", "category", "description", "params", "example"])
+        for f in funcs:
+            params = ";".join(f.params) if f.params else ""
+            writer.writerow([f.name, f.category, f.description, params, f.example])
+        return
+
+    _print_functions_table(funcs, category)
+
+
+def _print_functions_table(funcs: list, category: str | None) -> None:
+    """Print functions as a Rich table to stderr."""
+    try:
+        from rich.table import Table
+
+        title = f"Feature Functions ({category})" if category else "Feature Functions"
+        table = Table(title=title, show_header=True, header_style="bold cyan")
+        table.add_column("Function", style="green")
+        table.add_column("Category", style="yellow")
+        table.add_column("Description")
+        table.add_column("Params", style="dim")
+
+        for f in funcs:
+            params = ", ".join(f.params) if f.params else "-"
+            table.add_row(f.name, f.category, f.description, params)
+
+        if console:
+            console.print(table)
+        else:
+            _print_functions_simple(funcs)
+    except ImportError:
+        _print_functions_simple(funcs)
+
+
+def _print_functions_simple(funcs: list) -> None:
+    """Print functions as plain text to stderr."""
+    stderr_print("Available Functions:")
+    stderr_print("-" * 60)
+    for f in funcs:
+        params = f", params: {', '.join(f.params)}" if f.params else ""
+        stderr_print(f"  {f.name} ({f.category}): {f.description}{params}")
+    stderr_print("")
+
+
+@app.command()
 def train(
     config: Annotated[
         Path | None,

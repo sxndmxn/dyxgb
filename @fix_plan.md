@@ -17,8 +17,8 @@
 - [ ] Update `config.example.yaml` with human-readable function examples
 
 ### Phase 3: CLI & TUI
-- [ ] Add `dyxgb functions` command to `src/dyxgb/cli.py`
-- [ ] Update `src/dyxgb/interactive.py` with function selection list
+- [x] Add `dyxgb functions` command to `src/dyxgb/cli.py`
+- [x] Update `src/dyxgb/interactive.py` with function selection list
 
 ### Phase 4: Testing & Verification
 - [ ] Create `tests/test_registry.py` with tests for each function

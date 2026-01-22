@@ -1,6 +1,7 @@
 """Interactive mode using InquirerPy prompts."""
 
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 from InquirerPy import inquirer
@@ -10,6 +11,8 @@ from dyxgb.data.file import FileLoader
 from dyxgb.evaluation.importance import get_feature_importance, print_importance
 from dyxgb.model.predictor import Predictor
 from dyxgb.model.trainer import TaskType, Trainer, save_model
+from dyxgb.transforms.features import FeatureTransform
+from dyxgb.transforms.registry import get_function, list_functions
 
 
 def select_data_source() -> tuple[str, dict]:
@@ -62,6 +65,222 @@ def _get_uri_example(source_type: str) -> str:
         "postgres": "postgres://user:password@localhost:5432/dbname",
     }
     return examples.get(source_type, "")
+
+
+def _parse_scalar(value: str) -> Any:
+    """Parse a scalar value from text input."""
+    raw = value.strip()
+    if raw == "":
+        return ""
+    lower = raw.lower()
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        return raw
+
+
+def _prompt_optional_float(message: str) -> float | None:
+    """Prompt for an optional float; blank returns None."""
+    while True:
+        raw = inquirer.text(message=message, default="").execute()
+        raw = raw.strip()
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            print("Enter a numeric value or leave blank.")
+
+
+def _prompt_float_list(message: str) -> list[float]:
+    """Prompt for a comma-separated list of floats."""
+    while True:
+        raw = inquirer.text(message=message).execute()
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if not parts:
+            print("Enter at least one value.")
+            continue
+        try:
+            return [float(p) for p in parts]
+        except ValueError:
+            print("Values must be numbers separated by commas.")
+
+
+def _prompt_labels(expected: int) -> list[str]:
+    """Prompt for comma-separated labels with exact count."""
+    while True:
+        raw = inquirer.text(
+            message=f"Labels (comma-separated, {expected} total):",
+        ).execute()
+        labels = [p.strip() for p in raw.split(",") if p.strip()]
+        if len(labels) != expected:
+            print(f"Expected {expected} labels.")
+            continue
+        return labels
+
+
+def _prompt_fill_value() -> Any:
+    """Prompt for a fill value with basic parsing."""
+    while True:
+        raw = inquirer.text(message="Fill value (string or number):").execute()
+        if raw.strip():
+            return _parse_scalar(raw)
+        print("Fill value cannot be empty.")
+
+
+def _feature_required_columns(feature_config: dict[str, Any]) -> set[str]:
+    """Get required input columns for a feature config."""
+    if "columns" in feature_config:
+        return set(feature_config["columns"])
+    if "column" in feature_config:
+        return {feature_config["column"]}
+    return set()
+
+
+def _collect_raw_dependencies(feature_configs: list[dict[str, Any]]) -> set[str]:
+    """Collect base columns needed for feature configs."""
+    derived = {cfg.get("name") for cfg in feature_configs}
+    raw: set[str] = set()
+    for cfg in feature_configs:
+        for col in _feature_required_columns(cfg):
+            if col not in derived:
+                raw.add(col)
+    return raw
+
+
+def _filter_feature_configs(
+    feature_configs: list[dict[str, Any]],
+    available_columns: list[str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Drop feature configs whose inputs are missing."""
+    available = set(available_columns)
+    filtered: list[dict[str, Any]] = []
+    dropped: list[str] = []
+    for cfg in feature_configs:
+        required = _feature_required_columns(cfg)
+        if required <= available:
+            filtered.append(cfg)
+            if "name" in cfg:
+                available.add(cfg["name"])
+        else:
+            dropped.append(cfg.get("name", "<unknown>"))
+    return filtered, dropped
+
+
+def select_feature_engineering(df: pl.DataFrame) -> list[dict[str, Any]]:
+    """Interactively build feature engineering configs."""
+    if not inquirer.confirm(
+        message="Add feature engineering?",
+        default=False,
+    ).execute():
+        return []
+
+    specs = sorted(list_functions(), key=lambda f: f.name)
+    choices = [
+        {
+            "name": f"{spec.name} ({spec.category}) - {spec.description}",
+            "value": spec.name,
+        }
+        for spec in specs
+    ]
+
+    feature_configs: list[dict[str, Any]] = []
+    available_columns = list(df.columns)
+
+    while True:
+        while True:
+            feature_name = inquirer.text(
+                message="New feature name:",
+                validate=lambda x: bool(x.strip()) or "Name is required.",
+            ).execute().strip()
+            if feature_name in available_columns:
+                overwrite = inquirer.confirm(
+                    message=f"Column '{feature_name}' exists. Overwrite?",
+                    default=False,
+                ).execute()
+                if overwrite:
+                    break
+                continue
+            break
+
+        func_name = inquirer.select(
+            message="Select function:",
+            choices=choices,
+        ).execute()
+        spec = get_function(func_name)
+
+        feature_config: dict[str, Any] = {
+            "name": feature_name,
+            "function": spec.name,
+        }
+
+        if spec.name in {"ratio", "difference", "product"}:
+            columns = inquirer.checkbox(
+                message="Select 2 columns:",
+                choices=available_columns,
+                validate=lambda res: len(res) == 2 or "Select exactly 2 columns.",
+            ).execute()
+            feature_config["columns"] = list(columns)
+        else:
+            column = inquirer.select(
+                message="Select column:",
+                choices=available_columns,
+            ).execute()
+            feature_config["column"] = column
+
+        if spec.name == "clip":
+            min_val = _prompt_optional_float("Minimum value (blank for none):")
+            max_val = _prompt_optional_float("Maximum value (blank for none):")
+            if min_val is not None:
+                feature_config["min_val"] = min_val
+            if max_val is not None:
+                feature_config["max_val"] = max_val
+        elif spec.name == "threshold":
+            value = inquirer.number(
+                message="Threshold value:",
+                default=0,
+            ).execute()
+            feature_config["value"] = float(value)
+        elif spec.name == "bin":
+            bins = _prompt_float_list("Bin edges (comma-separated):")
+            feature_config["bins"] = bins
+            if inquirer.confirm(
+                message="Provide custom labels?",
+                default=False,
+            ).execute():
+                feature_config["labels"] = _prompt_labels(len(bins) + 1)
+        elif spec.name == "contains":
+            pattern = inquirer.text(message="Pattern to search for:").execute()
+            feature_config["pattern"] = pattern
+        elif spec.name == "days_since":
+            reference_date = inquirer.text(
+                message="Reference date (YYYY-MM-DD, blank for today):",
+                default="",
+            ).execute()
+            if reference_date.strip():
+                feature_config["reference_date"] = reference_date.strip()
+        elif spec.name == "fillna":
+            feature_config["value"] = _prompt_fill_value()
+
+        feature_configs.append(feature_config)
+        if feature_name not in available_columns:
+            available_columns.append(feature_name)
+
+        if not inquirer.confirm(
+            message="Add another feature?",
+            default=False,
+        ).execute():
+            break
+
+    return feature_configs
 
 
 def load_data_interactive(config: dict) -> pl.DataFrame:
@@ -121,7 +340,7 @@ def align_unknown_columns(
         if feat not in unknown_cols:
             choices = list(unknown_df.columns) + ["<skip>"]
             mapped = inquirer.select(
-                message=f"Missing feature '{feat}'. Map a column or <skip>:",
+                message=f"Missing column '{feat}'. Map a column or <skip>:",
                 choices=choices,
             ).execute()
             if mapped != "<skip>":
@@ -133,7 +352,7 @@ def align_unknown_columns(
 
     missing_after = [c for c in selected_features if c not in unknown_cols]
     if missing_after:
-        print("Dropping features not present in unknown_data:", missing_after)
+        print("Dropping columns not present in unknown data:", missing_after)
         selected_features = [c for c in selected_features if c in unknown_cols]
 
     return unknown_df, selected_features
@@ -212,6 +431,18 @@ def run_interactive() -> None:
     train_df = load_data_interactive(train_config)
     print(f"Loaded {len(train_df)} rows, {len(train_df.columns)} columns")
 
+    # Optional feature engineering
+    feature_configs = select_feature_engineering(train_df)
+    derived_feature_names: set[str] = set()
+    raw_dependencies: set[str] = set()
+    if feature_configs:
+        feature_transform = FeatureTransform(features=feature_configs)
+        train_df = feature_transform.transform(train_df)
+        derived_feature_names = {cfg["name"] for cfg in feature_configs}
+        raw_dependencies = _collect_raw_dependencies(feature_configs)
+    else:
+        feature_transform = None
+
     # Select task, target, features
     task_type = select_task_type()
     target_col, feature_cols = select_target_and_features(train_df)
@@ -277,7 +508,29 @@ def run_interactive() -> None:
         print(f"Loaded {len(unknown_df)} rows")
 
         # Align columns
-        unknown_df, feature_cols = align_unknown_columns(unknown_df, feature_cols)
+        if feature_transform:
+            raw_feature_cols = [c for c in feature_cols if c not in derived_feature_names]
+            required_raw_cols = sorted(set(raw_feature_cols) | raw_dependencies)
+            unknown_df, aligned_raw_cols = align_unknown_columns(unknown_df, required_raw_cols)
+
+            aligned_raw_set = set(aligned_raw_cols)
+            dropped_raw = [c for c in raw_feature_cols if c not in aligned_raw_set]
+            if dropped_raw:
+                print("Dropping raw features not present in unknown data:", dropped_raw)
+                feature_cols = [c for c in feature_cols if c not in dropped_raw]
+
+            filtered_configs, dropped_derived = _filter_feature_configs(
+                feature_configs,
+                list(unknown_df.columns),
+            )
+            if dropped_derived:
+                print("Dropping derived features due to missing columns:", dropped_derived)
+                feature_cols = [c for c in feature_cols if c not in dropped_derived]
+
+            if filtered_configs:
+                unknown_df = FeatureTransform(features=filtered_configs).transform(unknown_df)
+        else:
+            unknown_df, feature_cols = align_unknown_columns(unknown_df, feature_cols)
 
         # Run predictions
         predict_unknowns_interactive(result, unknown_df, feature_cols)
