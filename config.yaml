@@ -1,0 +1,168 @@
+# dyxgb Configuration
+# Copy this file to customize for your use case.
+
+# Data sources configuration
+data:
+  # Training data source
+  train:
+    # Source type: file, sqlite, duckdb, or postgres
+    type: file
+    # For file sources:
+    path: "data/train.parquet"
+    # For database sources (uncomment and fill in):
+    # type: postgres
+    # uri: "postgres://user:password@localhost:5432/mydb"
+    # query: "SELECT * FROM training_data WHERE date > '2024-01-01'"
+    # Or use table instead of query:
+    # table: "training_data"
+
+  # Prediction data source (optional)
+  predict:
+    type: file
+    path: "data/predict.parquet"
+
+# =============================================================================
+# TRANSFORMS - Data preprocessing pipeline
+# =============================================================================
+# Transforms are applied in this order: rename -> cast -> missing -> features -> encode -> scale
+# The pipeline is fitted on training data and saved, then applied to prediction data.
+
+transforms:
+  # Column renaming - map different column names to canonical names
+  # This allows truth and unknown datasets with different schemas to work together
+  rename:
+    # Map multiple possible source names to a single canonical name
+    customer_id: id       # truth dataset column
+    cust_id: id           # unknown dataset column
+    CustomerId: id        # another possible name
+    txn_amt: amount
+    transaction_amount: amount
+    Amount: amount
+
+  # Type casting - convert columns to specific types
+  cast:
+    amount: float
+    age: int
+    date: datetime
+    is_active: bool
+
+  # Missing value handling - impute or drop missing values
+  # Strategy options: mean, median, mode, constant, drop
+  missing:
+    strategy: median  # Default strategy for all columns
+    # Per-column overrides:
+    columns:
+      category: mode      # Use most frequent value for categoricals
+      notes: constant     # Use constant value
+    constant_value: "unknown"  # Value for 'constant' strategy
+
+  # Feature engineering - create new features with functions or Polars expressions
+  features:
+    # Human-readable function syntax (recommended)
+    - name: amount_log
+      function: log
+      column: amount
+    - name: age_squared
+      function: square
+      column: age
+    - name: amount_per_age
+      function: ratio
+      columns: [amount, age]
+    - name: is_high_value
+      function: threshold
+      column: amount
+      value: 1000
+    # Raw Polars expression syntax (advanced)
+    # - name: amount_log_expr
+    #   expr: "pl.col('amount').log1p()"
+
+  # Categorical encoding - convert string columns to integers (LabelEncoder)
+  # Fitted on training data, applied to prediction data
+  # Unknown categories in prediction data are mapped to unknown_value
+  encode:
+    columns:
+      - category
+      - region
+      - status
+    unknown_value: -1  # Value for categories not seen in training
+
+  # Scaling - normalize numeric columns (StandardScaler or MinMaxScaler)
+  # Fitted on training data (learns mean/std), applied to prediction data
+  scale:
+    method: standard  # Options: standard, minmax
+    columns:  # If omitted, scales all numeric columns except target
+      - amount
+      - age
+      - amount_log
+
+# =============================================================================
+# MODEL CONFIGURATION
+# =============================================================================
+
+model:
+  # Task type: classification or regression
+  task: classification
+
+  # Target column name (after transforms are applied)
+  target: label
+
+  # Feature columns (after transforms - leave empty to use all except target)
+  features:
+    - amount
+    - age
+    - amount_log
+    - age_squared
+    - category
+    - region
+
+  # XGBoost hyperparameters
+  hyperparameters:
+    n_estimators: 300
+    max_depth: 6
+    learning_rate: 0.1
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 1
+    gamma: 0.0
+    reg_alpha: 0.0
+    reg_lambda: 1.0
+    random_state: 42
+    n_jobs: -1
+
+  # Training settings
+  validation_split: 0.2
+  early_stopping_rounds: 50
+
+# Hyperparameter tuning configuration (requires optuna)
+tuning:
+  enabled: false
+  n_trials: 50
+  # Metric for optimization (auto-selected if not specified)
+  # Classification: accuracy, f1_weighted, roc_auc
+  # Regression: neg_root_mean_squared_error, neg_mean_absolute_error, r2
+  metric: null
+  timeout: null  # Maximum time in seconds
+  cv_folds: 5
+
+# Output paths
+output:
+  model_path: "models/model.json"
+  encoder_path: "models/label_encoder.joblib"
+  pipeline_path: "models/pipeline.joblib"  # Fitted transform pipeline
+  predictions_path: "output/predictions.parquet"
+  importance_path: "output/feature_importance.json"
+  metrics_path: "output/metrics.json"
+
+# Evaluation settings
+evaluation:
+  show_metrics: true
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - roc_auc
+    - confusion_matrix
+  show_importance: true
+  importance_type: gain  # weight, gain, cover, total_gain, total_cover
+  top_n_features: 20

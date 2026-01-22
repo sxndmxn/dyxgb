@@ -202,24 +202,43 @@ data:
     type: file
     path: "data/train.parquet"
 
+transforms:
+  rename:
+    txn_amt: amount
+  cast:
+    amount: float
+    age: int
+  missing:
+    strategy: median
+  features:
+    - name: amount_log
+      function: log
+      column: amount
+    - name: amount_per_age
+      function: ratio
+      columns: [amount, age]
+  encode:
+    columns:
+      - category
+  scale:
+    method: standard
+    columns:
+      - amount
+      - amount_log
+
 model:
   task: classification
   target: label
   features:
-    - feature_1
-    - feature_2
+    - amount
+    - age
+    - amount_log
+    - amount_per_age
+    - category
   hyperparameters:
     n_estimators: 300
     max_depth: 6
     learning_rate: 0.1
-
-tuning:
-  enabled: true
-  n_trials: 50
-  metric: f1_weighted
-
-output:
-  model_path: "models/model.dyxgb"
 ```
 
 ```bash
@@ -230,7 +249,23 @@ dyxgb train --config config.yaml
 dyxgb train --config config.yaml --tune --tune-trials 200
 ```
 
-See `config.example.yaml` for a complete example.
+See `config.yaml` or `config.example.yaml` for a complete example.
+
+### Feature Engineering
+
+Feature engineering lives under `transforms` and runs in a fixed order:
+rename -> cast -> missing -> features -> encode -> scale. The pipeline is
+fitted on training data and stored in the `.dyxgb` bundle, so predict and
+evaluate reuse the exact same transforms.
+
+Each entry in `transforms.features` needs a `name` and either:
+- `function` plus `column` or `columns` for the built-in registry (list with `dyxgb functions`)
+- `expr` for a raw Polars expression string (advanced; `pl` is in scope)
+
+Features run after missing-value handling and before encoding/scaling, so add
+any derived categoricals to `encode.columns` and derived numerics to
+`scale.columns` (or omit `scale.columns` to auto-scale). `model.features`
+should reference the post-transform column names.
 
 ## Output Schemas
 
