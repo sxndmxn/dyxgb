@@ -1,47 +1,61 @@
 """Feature engineering transform using Polars expressions."""
 
+from typing import Any
+
 import polars as pl
 
 from dyxgb.transforms.base import StatelessTransform
+from dyxgb.transforms.registry import build_expression
 
 
 class FeatureTransform(StatelessTransform):
-    """Create new features using Polars expressions.
+    """Create new features using human-readable functions or Polars expressions.
 
-    Allows defining computed columns using the full power of Polars
-    expression syntax.
+    Supports two syntax options:
 
-    Example config:
+    1. Human-readable function syntax (recommended):
+        features:
+            - name: amount_log
+              function: log
+              column: amount
+
+            - name: age_squared
+              function: square
+              column: age
+
+            - name: amount_per_age
+              function: ratio
+              columns: [amount, age]
+
+            - name: is_high_value
+              function: threshold
+              column: amount
+              value: 1000
+
+    2. Raw Polars expression syntax (advanced users):
         features:
             - name: amount_log
               expr: "pl.col('amount').log1p()"
             - name: age_squared
               expr: "pl.col('age') ** 2"
-            - name: amount_per_age
-              expr: "pl.col('amount') / (pl.col('age') + 1)"
-            - name: is_high_value
-              expr: "pl.col('amount') > 1000"
-            - name: category_amount
-              expr: "pl.col('category') + '_' + pl.col('amount').cast(pl.Utf8)"
 
-    Expression Syntax:
-        - Use pl.col('column_name') to reference columns
-        - Use standard Python operators: +, -, *, /, **, //, %
-        - Use Polars methods: .log(), .log1p(), .sqrt(), .abs(), etc.
-        - Use conditionals: pl.when(...).then(...).otherwise(...)
-        - Use string methods: .str.to_lowercase(), .str.contains(), etc.
+    Available functions:
+        Math: log, square, sqrt, abs, clip, ratio, difference, product, threshold, bin
+        String: length, lower, upper, contains
+        Date: dayofweek, month, year, days_since
+        Null: fillna, is_null
 
-    Security Note:
-        Expressions are evaluated using eval(). Only use with trusted config files.
+    Use `dyxgb functions` to see all available functions with descriptions.
     """
 
     name = "features"
 
-    def __init__(self, features: list[dict[str, str]]) -> None:
+    def __init__(self, features: list[dict[str, Any]]) -> None:
         """Initialize feature transform.
 
         Args:
-            features: List of feature definitions, each with 'name' and 'expr' keys
+            features: List of feature definitions with 'name' and either
+                     'function' + 'column'/'columns' or 'expr' keys
         """
         self.features = features
 
@@ -49,8 +63,10 @@ class FeatureTransform(StatelessTransform):
         for i, feat in enumerate(features):
             if "name" not in feat:
                 raise ValueError(f"Feature {i} missing 'name' key")
-            if "expr" not in feat:
-                raise ValueError(f"Feature '{feat.get('name', i)}' missing 'expr' key")
+            if "expr" not in feat and "function" not in feat:
+                raise ValueError(
+                    f"Feature '{feat.get('name', i)}' requires either 'expr' or 'function' key"
+                )
 
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
         """Apply feature expressions to create new columns.
@@ -63,12 +79,17 @@ class FeatureTransform(StatelessTransform):
         """
         for feat in self.features:
             name = feat["name"]
-            expr_str = feat["expr"]
 
             try:
-                # Evaluate the Polars expression
-                # We provide 'pl' in the eval namespace
-                expr = eval(expr_str, {"pl": pl, "__builtins__": {}})
+                if "function" in feat:
+                    # New human-readable function syntax
+                    expr = build_expression(feat)
+                else:
+                    # Legacy Polars expression syntax
+                    expr_str = feat["expr"]
+                    # Evaluate the Polars expression
+                    # We provide 'pl' in the eval namespace
+                    expr = eval(expr_str, {"pl": pl, "__builtins__": {}})
 
                 # Apply the expression and alias with the feature name
                 if isinstance(expr, pl.Expr):
@@ -79,17 +100,24 @@ class FeatureTransform(StatelessTransform):
                         f"Got: {type(expr)}"
                     )
             except Exception as e:
-                raise ValueError(
-                    f"Error evaluating expression for feature '{name}': {expr_str}\nError: {e}"
-                ) from e
+                if "function" in feat:
+                    raise ValueError(
+                        f"Error building feature '{name}' with function "
+                        f"'{feat['function']}': {e}"
+                    ) from e
+                else:
+                    raise ValueError(
+                        f"Error evaluating expression for feature '{name}': "
+                        f"{feat.get('expr')}\nError: {e}"
+                    ) from e
 
         return df
 
-    def get_params(self) -> dict[str, list[dict[str, str]]]:
+    def get_params(self) -> dict[str, list[dict[str, Any]]]:
         """Get features for serialization."""
         return {"features": self.features}
 
-    def set_params(self, params: dict[str, list[dict[str, str]]]) -> None:
+    def set_params(self, params: dict[str, list[dict[str, Any]]]) -> None:
         """Set features from deserialization."""
         self.features = params.get("features", [])
 
